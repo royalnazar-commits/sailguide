@@ -108,6 +108,11 @@ export default function UserRouteDetailScreen() {
     router.replace('/route-builder')
   }
 
+  // Confirm / save: route is already persisted as draft — just go back to routes list
+  const handleSave = () => {
+    router.replace('/my-routes')
+  }
+
   const handleDelete = () => {
     Alert.alert('Delete Route', `Delete "${route.title}"? This cannot be undone.`, [
       { text: 'Cancel', style: 'cancel' },
@@ -240,11 +245,11 @@ export default function UserRouteDetailScreen() {
               <Ionicons name="create-outline" size={20} color={Colors.secondary} />
             </TouchableOpacity>
             <TouchableOpacity
-              onPress={handleDelete}
-              style={styles.deleteBtn}
+              onPress={handleSave}
+              style={styles.confirmBtn}
               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             >
-              <Ionicons name="trash-outline" size={20} color={Colors.danger} />
+              <Ionicons name="checkmark" size={22} color="#fff" />
             </TouchableOpacity>
           </View>
         )}
@@ -447,6 +452,17 @@ export default function UserRouteDetailScreen() {
         <View style={styles.section}>
           <Text style={styles.metaDate}>Created {createdDate}</Text>
         </View>
+
+        {/* Delete — secondary destructive action at the very bottom */}
+        {isOwned && (
+          <TouchableOpacity
+            style={styles.deleteLink}
+            onPress={handleDelete}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.deleteLinkText}>Delete route</Text>
+          </TouchableOpacity>
+        )}
       </ScrollView>
     </View>
   )
@@ -525,9 +541,26 @@ const styles = StyleSheet.create({
     width: 38, height: 38, borderRadius: 19,
     backgroundColor: Colors.secondary + '12', alignItems: 'center', justifyContent: 'center',
   },
+  confirmBtn: {
+    width: 38, height: 38, borderRadius: 19,
+    backgroundColor: Colors.secondary, alignItems: 'center', justifyContent: 'center',
+  },
   deleteBtn: {
     width: 38, height: 38, borderRadius: 19,
     backgroundColor: Colors.danger + '10', alignItems: 'center', justifyContent: 'center',
+  },
+  deleteLink: {
+    alignSelf: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    marginTop: 8,
+    marginBottom: 8,
+  },
+  deleteLinkText: {
+    fontSize: 14,
+    color: Colors.danger,
+    fontWeight: '500',
+    textDecorationLine: 'underline',
   },
 
   scrollContent: { gap: 0 },
