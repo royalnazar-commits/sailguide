@@ -28,21 +28,36 @@ export default function RouteDetailScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: Math.max(120, 80 + insets.bottom) }}>
-      {/* Hero image */}
-      <Image
-        source={{ uri: route.previewPhotos[0] || 'https://images.unsplash.com/photo-1505118380757-91f5f5632de0?w=800' }}
-        style={styles.heroImage}
-      />
-      <TouchableOpacity style={[styles.backBtn, { top: insets.top + 12 }]} onPress={() => router.back()} activeOpacity={0.7}>
-        <Ionicons name="arrow-back" size={22} color="#fff" />
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={[styles.bookmarkBtn, { top: insets.top + 12 }]}
-        onPress={() => toggleSaveRoute(route.id)}
-        activeOpacity={0.7}
-      >
-        <Ionicons name={isSaved ? 'bookmark' : 'bookmark-outline'} size={22} color={isSaved ? Colors.secondary : '#fff'} />
-      </TouchableOpacity>
+      {/* ── Hero image with overlaid title + bookmark ── */}
+      <View style={styles.heroContainer}>
+        <Image
+          source={{ uri: route.previewPhotos[0] || 'https://images.unsplash.com/photo-1505118380757-91f5f5632de0?w=800' }}
+          style={styles.heroImage}
+        />
+        {/* Multi-layer scrim simulates bottom gradient */}
+        <View style={styles.heroScrim} />
+        <View style={styles.heroScrimDeep} />
+
+        {/* Back button — top left */}
+        <TouchableOpacity style={[styles.backBtn, { top: insets.top + 12 }]} onPress={() => router.back()} activeOpacity={0.7}>
+          <Ionicons name="arrow-back" size={22} color="#fff" />
+        </TouchableOpacity>
+
+        {/* Title row — bottom of hero with bookmark on the right */}
+        <View style={styles.heroTitleRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.heroTitle} numberOfLines={2}>{route.title}</Text>
+            <Text style={styles.heroRegion}>{route.region} · {route.country}</Text>
+          </View>
+          <TouchableOpacity
+            style={styles.bookmarkBtn}
+            onPress={() => toggleSaveRoute(route.id)}
+            activeOpacity={0.7}
+          >
+            <Ionicons name={isSaved ? 'bookmark' : 'bookmark-outline'} size={22} color={isSaved ? '#F59E0B' : '#fff'} />
+          </TouchableOpacity>
+        </View>
+      </View>
 
       <View style={styles.body}>
         {/* Badges */}
@@ -59,9 +74,6 @@ export default function RouteDetailScreen() {
             </Text>
           </View>
         </View>
-
-        <Text style={styles.title}>{route.title}</Text>
-        <Text style={styles.region}>{route.region} · {route.country}</Text>
 
         {/* Stats grid */}
         <View style={styles.statsGrid}>
@@ -144,25 +156,43 @@ function StatBox({ icon, value, label, iconColor }: any) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
-  heroImage: { width: '100%', height: 280 },
+
+  // Hero
+  heroContainer: { position: 'relative', height: 300 },
+  heroImage: { width: '100%', height: 300 },
+  // Two-layer scrim simulates a bottom fade (transparent → dark)
+  heroScrim: {
+    position: 'absolute', bottom: 0, left: 0, right: 0, height: 180,
+    backgroundColor: 'rgba(0,0,0,0.22)',
+  },
+  heroScrimDeep: {
+    position: 'absolute', bottom: 0, left: 0, right: 0, height: 90,
+    backgroundColor: 'rgba(0,0,0,0.48)',
+  },
+  heroTitleRow: {
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    flexDirection: 'row', alignItems: 'flex-end',
+    paddingHorizontal: 16, paddingBottom: 18, paddingTop: 0,
+  },
+  heroTitle: { fontSize: 22, fontWeight: '800', color: '#fff', lineHeight: 28, marginBottom: 4 },
+  heroRegion: { fontSize: 14, color: 'rgba(255,255,255,0.82)', fontWeight: '500' },
   backBtn: {
     position: 'absolute', left: 16,
     width: 40, height: 40, borderRadius: 20,
     backgroundColor: 'rgba(0,0,0,0.35)', alignItems: 'center', justifyContent: 'center',
   },
   bookmarkBtn: {
-    position: 'absolute', right: 16,
-    width: 40, height: 40, borderRadius: 20,
-    backgroundColor: 'rgba(0,0,0,0.35)', alignItems: 'center', justifyContent: 'center',
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: 'rgba(0,0,0,0.40)', alignItems: 'center', justifyContent: 'center',
+    marginLeft: 12, flexShrink: 0,
   },
+
   body: { padding: 20 },
   badgeRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
   verifiedBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#EFF6FF', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
   verifiedText: { fontSize: 12, color: Colors.verified, fontWeight: '600' },
   diffBadge: { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
   diffText: { fontSize: 12, fontWeight: '600' },
-  title: { fontSize: 24, fontWeight: '800', color: Colors.text, marginBottom: 6 },
-  region: { fontSize: 15, color: Colors.textSecondary, marginBottom: 16 },
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 16 },
   statBox: { flex: 1, minWidth: '22%', backgroundColor: '#fff', borderRadius: 12, padding: 12, alignItems: 'center', gap: 4 },
   statValue: { fontSize: 15, fontWeight: '700', color: Colors.text },

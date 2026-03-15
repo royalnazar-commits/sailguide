@@ -138,6 +138,12 @@ export default function RouteMapScreen() {
     animateToPoint(nextPoint)
   }, [selectedPoint, points, openPanel, animateToPoint])
 
+  // Keep a stable ref so the panResponder (created once) always calls the latest version
+  const navigateStopRef = useRef(navigateStop)
+  const closePanelRef = useRef(closePanel)
+  navigateStopRef.current = navigateStop
+  closePanelRef.current = closePanel
+
   // PanResponder for the panel: horizontal swipe → next/prev stop, vertical swipe down → close
   const panResponder = useRef(
     PanResponder.create({
@@ -149,14 +155,11 @@ export default function RouteMapScreen() {
         const isHorizontal = Math.abs(gs.dx) > Math.abs(gs.dy)
         if (isHorizontal && Math.abs(gs.dx) > 50 && Math.abs(gs.dy) < 80) {
           // Horizontal swipe: left = next, right = prev
-          if (gs.dx < 0) {
-            navigateStop(1)
-          } else {
-            navigateStop(-1)
-          }
+          if (gs.dx < 0) navigateStopRef.current(1)
+          else navigateStopRef.current(-1)
         } else if (!isHorizontal && gs.dy > 60) {
           // Swipe down → close
-          closePanel()
+          closePanelRef.current()
         }
       },
     })
@@ -175,7 +178,7 @@ export default function RouteMapScreen() {
       },
       onPanResponderRelease: (_e, gs) => {
         if (gs.dy > 60) {
-          closePanel()
+          closePanelRef.current()
         } else {
           Animated.spring(translateY, {
             toValue: 0,
