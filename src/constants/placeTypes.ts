@@ -55,7 +55,7 @@ export interface PlaceTypeMeta {
 const REGISTRY: Record<CanonicalPlaceType, PlaceTypeMeta> = {
   MARINA: {
     type: 'MARINA', label: 'Marina', labelPlural: 'Marinas',
-    icon: 'anchor', color: '#1B6CA8', bg: '#1B6CA820',
+    icon: 'navigate-circle-outline', color: '#1B6CA8', bg: '#1B6CA820',
   },
   ANCHORAGE: {
     type: 'ANCHORAGE', label: 'Anchorage', labelPlural: 'Anchorages',
@@ -206,7 +206,7 @@ export interface PlaceTypeFilter {
 
 export const PLACE_TYPE_FILTERS: readonly PlaceTypeFilter[] = [
   { key: 'ALL',        label: 'All',        icon: 'globe-outline',    activeColor: '#1B6CA8' },
-  { key: 'MARINA',     label: 'Marinas',    icon: 'anchor',           activeColor: '#1B6CA8' },
+  { key: 'MARINA',     label: 'Marinas',    icon: 'navigate-circle-outline', activeColor: '#1B6CA8' },
   { key: 'ANCHORAGE',  label: 'Anchorages', icon: 'boat-outline',     activeColor: '#22C55E' },
   { key: 'BAY',        label: 'Bays',       icon: 'water-outline',    activeColor: '#00B4D8' },
   { key: 'LAGOON',     label: 'Lagoons',    icon: 'ellipse-outline',  activeColor: '#0891B2' },

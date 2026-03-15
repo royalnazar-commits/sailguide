@@ -35,6 +35,7 @@ export function BoatCard({ yacht, onPress, compact = false }: Props) {
   const [imgErr, setImgErr] = useState(false)
   const heroUri = imgErr ? getFallback(yacht.type) : (yacht.images[0] ?? getFallback(yacht.type))
 
+
   if (compact) {
     return (
       <TouchableOpacity style={compact_styles.card} onPress={onPress} activeOpacity={0.88}>
