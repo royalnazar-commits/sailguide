@@ -453,15 +453,18 @@ export default function UserRouteDetailScreen() {
           <Text style={styles.metaDate}>Created {createdDate}</Text>
         </View>
 
-        {/* Delete — secondary destructive action at the very bottom */}
+        {/* Delete — destructive full-width button at the very bottom */}
         {isOwned && (
-          <TouchableOpacity
-            style={styles.deleteLink}
-            onPress={handleDelete}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.deleteLinkText}>Delete route</Text>
-          </TouchableOpacity>
+          <View style={styles.deleteSection}>
+            <TouchableOpacity
+              style={styles.deleteBtn2}
+              onPress={handleDelete}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="trash-outline" size={18} color="#fff" />
+              <Text style={styles.deleteBtn2Text}>Delete Route</Text>
+            </TouchableOpacity>
+          </View>
         )}
       </ScrollView>
     </View>
@@ -549,18 +552,24 @@ const styles = StyleSheet.create({
     width: 38, height: 38, borderRadius: 19,
     backgroundColor: Colors.danger + '10', alignItems: 'center', justifyContent: 'center',
   },
-  deleteLink: {
-    alignSelf: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    marginTop: 8,
-    marginBottom: 8,
+  deleteSection: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 8,
   },
-  deleteLinkText: {
-    fontSize: 14,
-    color: Colors.danger,
-    fontWeight: '500',
-    textDecorationLine: 'underline',
+  deleteBtn2: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: Colors.danger,
+    borderRadius: 14,
+    paddingVertical: 14,
+  },
+  deleteBtn2Text: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '700',
   },
 
   scrollContent: { gap: 0 },
