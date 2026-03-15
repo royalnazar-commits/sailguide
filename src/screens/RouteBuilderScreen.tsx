@@ -2,6 +2,7 @@ import React, { useRef, useState, useCallback } from 'react'
 import {
   View, Text, StyleSheet, TouchableOpacity, TextInput,
   Alert, Animated, PanResponder, FlatList, Dimensions,
+  Modal, KeyboardAvoidingView, Platform, ScrollView,
 } from 'react-native'
 import MapView, { Marker, Polyline } from 'react-native-maps'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
@@ -15,13 +16,24 @@ import { Colors } from '../constants/colors'
 
 const { height: SCREEN_H } = Dimensions.get('window')
 const SHEET_MAX_H = Math.round(SCREEN_H * 0.62)
-const SNAP_PEEKED = SHEET_MAX_H - 76   // only handle + stats row visible
+const SNAP_PEEKED = SHEET_MAX_H - 76
 const SNAP_HALF   = Math.round(SHEET_MAX_H * 0.42)
 const SNAP_FULL   = 0
 
 const STOP_COLORS = ['#1B6CA8', '#22C55E', '#F59E0B', '#EF4444', '#8B5CF6', '#00B4D8', '#F97316']
 
-// ── Haversine (screen-local, avoids cross-module import) ──────────────────────
+const STOP_TYPE_OPTIONS = [
+  { type: 'CUSTOM',    label: 'Custom point', color: '#64748B' },
+  { type: 'ANCHORAGE', label: 'Anchorage',    color: '#22C55E' },
+  { type: 'MARINA',    label: 'Marina',       color: '#1B6CA8' },
+  { type: 'BAY',       label: 'Bay',          color: '#00B4D8' },
+  { type: 'BEACH',     label: 'Beach',        color: '#FF7043' },
+  { type: 'LAGOON',    label: 'Lagoon',       color: '#0891B2' },
+  { type: 'CAVE',      label: 'Cave',         color: '#7C3AED' },
+  { type: 'FUEL',      label: 'Fuel stop',    color: '#F59E0B' },
+]
+
+// ── Haversine ─────────────────────────────────────────────────────────────────
 
 function legNm(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 3440.065
@@ -45,6 +57,9 @@ export default function RouteBuilderScreen() {
     removeStop,
     moveStop,
     updateDraftTitle,
+    updateStopName,
+    updateStopNotes,
+    updateStopType,
     saveDraft,
     discardDraft,
   } = useRouteBuilderStore()
@@ -52,11 +67,38 @@ export default function RouteBuilderScreen() {
   const [titleFocused, setTitleFocused] = useState(false)
   const [snapState, setSnapState] = useState<'peeked' | 'half' | 'full'>('peeked')
 
+  // ── Stop editor modal state ───────────────────────────────────────────────
+
+  const [editingStopId, setEditingStopId] = useState<string | null>(null)
+  const [editName,  setEditName]  = useState('')
+  const [editNotes, setEditNotes] = useState('')
+  const [editType,  setEditType]  = useState('CUSTOM')
+
+  const stops = draftRoute?.stops ?? []
+  const editingStopIndex = editingStopId ? stops.findIndex((s) => s.id === editingStopId) : -1
+
+  const openStopEditor = useCallback((stop: UserRouteStop, index: number) => {
+    setEditName(stop.name ?? `Stop ${index + 1}`)
+    setEditNotes(stop.notes ?? '')
+    setEditType(stop.type ?? 'CUSTOM')
+    setEditingStopId(stop.id)
+  }, [])
+
+  const handleEditDone = useCallback(() => {
+    if (!editingStopId) return
+    const idx = editingStopIndex
+    updateStopName(editingStopId, editName.trim() || `Stop ${idx + 1}`)
+    updateStopNotes(editingStopId, editNotes.trim())
+    updateStopType(editingStopId, editType)
+    setEditingStopId(null)
+  }, [editingStopId, editingStopIndex, editName, editNotes, editType,
+      updateStopName, updateStopNotes, updateStopType])
+
   // ── Bottom sheet animation ────────────────────────────────────────────────
 
-  const sheetAnim  = useRef(new Animated.Value(SNAP_PEEKED)).current
-  const lastY      = useRef(SNAP_PEEKED)
-  const snapLabel  = useRef<'peeked' | 'half' | 'full'>('peeked')
+  const sheetAnim = useRef(new Animated.Value(SNAP_PEEKED)).current
+  const lastY     = useRef(SNAP_PEEKED)
+  const snapLabel = useRef<'peeked' | 'half' | 'full'>('peeked')
 
   const snapTo = useCallback((target: number, label: 'peeked' | 'half' | 'full') => {
     snapLabel.current = label
@@ -70,8 +112,7 @@ export default function RouteBuilderScreen() {
     onMoveShouldSetPanResponder:  (_, g) => Math.abs(g.dy) > 6,
     onPanResponderGrant: () => sheetAnim.stopAnimation(),
     onPanResponderMove: (_, g) => {
-      const next = Math.max(0, Math.min(SNAP_PEEKED, lastY.current + g.dy))
-      sheetAnim.setValue(next)
+      sheetAnim.setValue(Math.max(0, Math.min(SNAP_PEEKED, lastY.current + g.dy)))
     },
     onPanResponderRelease: (_, g) => {
       const now = lastY.current + g.dy
@@ -94,18 +135,13 @@ export default function RouteBuilderScreen() {
 
   // ── Map interaction ───────────────────────────────────────────────────────
 
-  const stops = draftRoute?.stops ?? []
-
   const handleMapPress = useCallback((e: any) => {
     const { latitude, longitude } = e.nativeEvent.coordinate
     addWaypoint(latitude, longitude)
     if (stops.length === 0) snapTo(SNAP_HALF, 'half')
   }, [stops.length, addWaypoint, snapTo])
 
-  const polylineCoords = stops.map((s) => ({
-    latitude:  s.lat!,
-    longitude: s.lng!,
-  }))
+  const polylineCoords = stops.map((s) => ({ latitude: s.lat!, longitude: s.lng! }))
 
   const handleFitMap = () => {
     if (polylineCoords.length === 0) return
@@ -125,10 +161,12 @@ export default function RouteBuilderScreen() {
       return
     }
     if (stops.length < 2) {
-      Alert.alert('Too few stops', 'Add at least 2 stops to save a route.')
+      Alert.alert('Too few stops', 'Add at least 2 waypoints to save a route.')
       return
     }
     const saved = saveDraft(() => null, 'DRAFT')
+    // replace keeps the stack clean; draft stays alive in store so
+    // the user can press "Edit" on the detail screen to come back
     if (saved) router.replace(`/user-route/${saved.id}`)
   }
 
@@ -157,7 +195,7 @@ export default function RouteBuilderScreen() {
   return (
     <View style={s.root}>
 
-      {/* ── Full-screen map ─────────────────────────────────────────── */}
+      {/* ── Full-screen map ──────────────────────────────────────── */}
       <MapView
         ref={mapRef}
         style={StyleSheet.absoluteFill}
@@ -186,7 +224,7 @@ export default function RouteBuilderScreen() {
         ))}
       </MapView>
 
-      {/* ── Floating header ─────────────────────────────────────────── */}
+      {/* ── Floating header ──────────────────────────────────────── */}
       <View style={[s.header, { paddingTop: insets.top + 8 }]}>
         <TouchableOpacity style={s.circleBtn} onPress={handleDiscard}>
           <Ionicons name="close" size={18} color={Colors.text} />
@@ -213,7 +251,7 @@ export default function RouteBuilderScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* ── Empty-state hint ────────────────────────────────────────── */}
+      {/* ── Empty-state hint ─────────────────────────────────────── */}
       {stops.length === 0 && (
         <View style={s.hint} pointerEvents="none">
           <Ionicons name="map-outline" size={22} color="rgba(255,255,255,0.9)" />
@@ -221,18 +259,18 @@ export default function RouteBuilderScreen() {
         </View>
       )}
 
-      {/* ── Fit-map FAB ─────────────────────────────────────────────── */}
+      {/* ── Fit-map FAB ──────────────────────────────────────────── */}
       {stops.length >= 2 && (
         <TouchableOpacity style={s.fitFab} onPress={handleFitMap} activeOpacity={0.85}>
           <Ionicons name="scan-outline" size={20} color={Colors.text} />
         </TouchableOpacity>
       )}
 
-      {/* ── Bottom Sheet ────────────────────────────────────────────── */}
+      {/* ── Bottom Sheet ─────────────────────────────────────────── */}
       <Animated.View
         style={[s.sheet, { height: SHEET_MAX_H, transform: [{ translateY: sheetAnim }] }]}
       >
-        {/* Drag handle row */}
+        {/* Drag handle + stats */}
         <View style={s.handleArea} {...panResponder.panHandlers}>
           <View style={s.handle} />
           <View style={s.statsRow}>
@@ -284,6 +322,7 @@ export default function RouteBuilderScreen() {
               stop={stop}
               index={i}
               total={stops.length}
+              onEdit={() => openStopEditor(stop, i)}
               onMoveUp={() => moveStop(i, i - 1, () => null)}
               onMoveDown={() => moveStop(i, i + 1, () => null)}
               onRemove={() => removeStop(stop.id, () => null)}
@@ -292,25 +331,126 @@ export default function RouteBuilderScreen() {
           )}
         />
       </Animated.View>
+
+      {/* ── Stop Editor Modal ────────────────────────────────────── */}
+      <Modal
+        visible={editingStopId !== null}
+        transparent
+        animationType="slide"
+        onRequestClose={handleEditDone}
+      >
+        <KeyboardAvoidingView
+          style={s.modalOuter}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
+          {/* Tap backdrop to dismiss */}
+          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={handleEditDone} />
+
+          <View style={[s.editSheet, { paddingBottom: insets.bottom + 16 }]}>
+            {/* Handle */}
+            <View style={s.editHandle} />
+
+            {/* Header */}
+            <View style={s.editHeader}>
+              <Text style={s.editTitle}>
+                Stop {editingStopIndex >= 0 ? editingStopIndex + 1 : ''}
+              </Text>
+              <TouchableOpacity style={s.editDoneBtn} onPress={handleEditDone} activeOpacity={0.8}>
+                <Text style={s.editDoneText}>Done</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Name */}
+            <Text style={s.editLabel}>Name</Text>
+            <TextInput
+              style={s.editInput}
+              value={editName}
+              onChangeText={setEditName}
+              placeholder={`Stop ${editingStopIndex + 1}`}
+              placeholderTextColor={Colors.textMuted}
+              maxLength={60}
+              returnKeyType="next"
+              autoFocus={false}
+            />
+
+            {/* Type chips */}
+            <Text style={s.editLabel}>Type</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={s.chipScroll}
+              contentContainerStyle={s.chipRow}
+            >
+              {STOP_TYPE_OPTIONS.map((opt) => (
+                <TouchableOpacity
+                  key={opt.type}
+                  style={[
+                    s.chip,
+                    editType === opt.type && { borderColor: opt.color, backgroundColor: opt.color + '18' },
+                  ]}
+                  onPress={() => setEditType(opt.type)}
+                  activeOpacity={0.75}
+                >
+                  <View style={[s.chipDot, { backgroundColor: opt.color }]} />
+                  <Text style={[
+                    s.chipText,
+                    editType === opt.type && { color: opt.color, fontWeight: '700' },
+                  ]}>
+                    {opt.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            {/* Notes */}
+            <Text style={s.editLabel}>
+              Skipper notes{' '}
+              <Text style={s.editLabelOpt}>(optional)</Text>
+            </Text>
+            <TextInput
+              style={s.editNotesInput}
+              value={editNotes}
+              onChangeText={setEditNotes}
+              placeholder={'Good lunch stop · fuel available · exposed in north wind…'}
+              placeholderTextColor={Colors.textMuted}
+              multiline
+              numberOfLines={3}
+              maxLength={280}
+              textAlignVertical="top"
+            />
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   )
 }
 
-// ── Stop row component ────────────────────────────────────────────────────────
+// ── Stop row ──────────────────────────────────────────────────────────────────
+
+const TYPE_COLOR: Record<string, string> = {
+  MARINA: '#1B6CA8', ANCHORAGE: '#22C55E', BAY: '#00B4D8',
+  BEACH: '#FF7043', LAGOON: '#0891B2', CAVE: '#7C3AED', FUEL: '#F59E0B',
+}
 
 interface StopRowProps {
   stop: UserRouteStop
   index: number
   total: number
+  onEdit: () => void
   onMoveUp: () => void
   onMoveDown: () => void
   onRemove: () => void
   nextStop?: UserRouteStop
 }
 
-function StopRow({ stop, index: i, total, onMoveUp, onMoveDown, onRemove, nextStop }: StopRowProps) {
+function StopRow({ stop, index: i, total, onEdit, onMoveUp, onMoveDown, onRemove, nextStop }: StopRowProps) {
   const nm = (stop.lat != null && stop.lng != null && nextStop?.lat != null && nextStop?.lng != null)
     ? legNm(stop.lat, stop.lng, nextStop.lat, nextStop.lng)
+    : null
+
+  const typeColor = stop.type && stop.type !== 'CUSTOM' ? TYPE_COLOR[stop.type] : null
+  const typeLabel = stop.type && stop.type !== 'CUSTOM'
+    ? STOP_TYPE_OPTIONS.find((o) => o.type === stop.type)?.label
     : null
 
   return (
@@ -326,14 +466,28 @@ function StopRow({ stop, index: i, total, onMoveUp, onMoveDown, onRemove, nextSt
       {/* Card */}
       <View style={s.stopCard}>
         <View style={s.stopCardRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={s.stopName}>{stop.name ?? `Stop ${i + 1}`}</Text>
-            {stop.lat != null && stop.lng != null && (
+          {/* Tappable info area → opens editor */}
+          <TouchableOpacity style={s.stopInfo} onPress={onEdit} activeOpacity={0.7}>
+            <View style={s.stopNameRow}>
+              <Text style={s.stopName} numberOfLines={1}>{stop.name ?? `Stop ${i + 1}`}</Text>
+              <Ionicons name="pencil-outline" size={11} color={Colors.textMuted} style={{ marginLeft: 4 }} />
+            </View>
+            {typeLabel && typeColor && (
+              <View style={[s.typeBadge, { backgroundColor: typeColor + '20' }]}>
+                <View style={[s.typeDot, { backgroundColor: typeColor }]} />
+                <Text style={[s.typeBadgeText, { color: typeColor }]}>{typeLabel}</Text>
+              </View>
+            )}
+            {stop.notes ? (
+              <Text style={s.notePreview} numberOfLines={1}>{stop.notes}</Text>
+            ) : (
               <Text style={s.stopCoord}>
-                {stop.lat.toFixed(4)}°, {stop.lng.toFixed(4)}°
+                {stop.lat?.toFixed(4)}°, {stop.lng?.toFixed(4)}°
               </Text>
             )}
-          </View>
+          </TouchableOpacity>
+
+          {/* Action buttons */}
           <View style={s.stopActions}>
             <TouchableOpacity style={s.actionBtn} onPress={onMoveUp} disabled={i === 0}>
               <Ionicons name="chevron-up" size={16} color={i === 0 ? Colors.border : Colors.textSecondary} />
@@ -346,6 +500,7 @@ function StopRow({ stop, index: i, total, onMoveUp, onMoveDown, onRemove, nextSt
             </TouchableOpacity>
           </View>
         </View>
+
         {nm !== null && (
           <View style={s.legRow}>
             <Ionicons name="arrow-down" size={10} color={Colors.textMuted} />
@@ -362,7 +517,6 @@ function StopRow({ stop, index: i, total, onMoveUp, onMoveDown, onRemove, nextSt
 const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#1a1a2e' },
 
-  // No-draft fallback
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, backgroundColor: Colors.background },
   centerText: { fontSize: 15, color: Colors.textSecondary, textAlign: 'center', marginBottom: 16 },
   backBtn: { backgroundColor: Colors.primary, borderRadius: 12, paddingVertical: 10, paddingHorizontal: 24 },
@@ -403,10 +557,9 @@ const s = StyleSheet.create({
   },
   pinText: { color: '#fff', fontSize: 11, fontWeight: '800' },
 
-  // Empty hint (center of map)
+  // Empty hint
   hint: {
-    position: 'absolute', bottom: SHEET_MAX_H - SNAP_PEEKED + 24,
-    alignSelf: 'center',
+    position: 'absolute', bottom: SHEET_MAX_H - SNAP_PEEKED + 24, alignSelf: 'center',
     flexDirection: 'row', alignItems: 'center', gap: 8,
     backgroundColor: 'rgba(0,0,0,0.52)', borderRadius: 20,
     paddingHorizontal: 16, paddingVertical: 10,
@@ -423,8 +576,7 @@ const s = StyleSheet.create({
 
   // Bottom sheet
   sheet: {
-    position: 'absolute', bottom: 0, left: 0, right: 0,
-    backgroundColor: '#fff',
+    position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: '#fff',
     borderTopLeftRadius: 20, borderTopRightRadius: 20,
     shadowColor: '#000', shadowOffset: { width: 0, height: -3 }, shadowOpacity: 0.10, shadowRadius: 12, elevation: 12,
   },
@@ -439,15 +591,12 @@ const s = StyleSheet.create({
   statsRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   statPill: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
-    backgroundColor: Colors.secondary + '12', borderRadius: 16,
-    paddingHorizontal: 10, paddingVertical: 5,
+    backgroundColor: Colors.secondary + '12', borderRadius: 16, paddingHorizontal: 10, paddingVertical: 5,
   },
   statText: { fontSize: 12, color: Colors.secondary, fontWeight: '600' },
   expandBtn: { padding: 4 },
 
-  // List
   listContent: { paddingHorizontal: 14, paddingTop: 8 },
-
   emptySheet: { alignItems: 'center', paddingTop: 24, paddingHorizontal: 24, gap: 8 },
   emptyTitle: { fontSize: 15, fontWeight: '700', color: Colors.text },
   emptySub: { fontSize: 13, color: Colors.textMuted, textAlign: 'center', lineHeight: 19 },
@@ -463,21 +612,77 @@ const s = StyleSheet.create({
   },
   dotText: { color: '#fff', fontSize: 11, fontWeight: '800' },
   connector: { flex: 1, width: 2, backgroundColor: Colors.border, marginVertical: 2 },
-
   stopCard: {
     flex: 1, backgroundColor: Colors.background,
     borderRadius: 12, padding: 10, marginBottom: 6,
     borderWidth: 1, borderColor: Colors.border,
   },
   stopCardRow: { flexDirection: 'row', alignItems: 'flex-start' },
+  stopInfo: { flex: 1 },
+  stopNameRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 2 },
   stopName: { fontSize: 13, fontWeight: '700', color: Colors.text },
-  stopCoord: { fontSize: 11, color: Colors.textMuted, marginTop: 2 },
+  stopCoord: { fontSize: 11, color: Colors.textMuted },
+  notePreview: { fontSize: 11, color: Colors.textSecondary, fontStyle: 'italic' },
+  typeBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    alignSelf: 'flex-start', borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2, marginBottom: 3,
+  },
+  typeDot: { width: 6, height: 6, borderRadius: 3 },
+  typeBadgeText: { fontSize: 10, fontWeight: '600' },
   stopActions: { flexDirection: 'row', alignItems: 'center', gap: 0 },
   actionBtn: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
-
   legRow: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
     marginTop: 6, paddingTop: 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: Colors.border,
   },
   legText: { fontSize: 11, color: Colors.textMuted },
+
+  // Stop editor modal
+  modalOuter: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.45)' },
+  editSheet: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 22, borderTopRightRadius: 22,
+    paddingHorizontal: 18,
+    shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: 16,
+  },
+  editHandle: {
+    width: 36, height: 4, borderRadius: 2, backgroundColor: Colors.border,
+    alignSelf: 'center', marginTop: 10, marginBottom: 14,
+  },
+  editHeader: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18,
+  },
+  editTitle: { fontSize: 17, fontWeight: '800', color: Colors.text },
+  editDoneBtn: {
+    backgroundColor: Colors.secondary, borderRadius: 18,
+    paddingVertical: 7, paddingHorizontal: 18,
+  },
+  editDoneText: { color: '#fff', fontSize: 14, fontWeight: '700' },
+
+  editLabel: {
+    fontSize: 12, fontWeight: '700', color: Colors.textSecondary,
+    textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8,
+  },
+  editLabelOpt: { fontWeight: '400', textTransform: 'none', letterSpacing: 0, color: Colors.textMuted },
+  editInput: {
+    backgroundColor: Colors.background, borderRadius: 10, borderWidth: 1, borderColor: Colors.border,
+    paddingHorizontal: 12, paddingVertical: 11, fontSize: 15, color: Colors.text, marginBottom: 18,
+  },
+  editNotesInput: {
+    backgroundColor: Colors.background, borderRadius: 10, borderWidth: 1, borderColor: Colors.border,
+    paddingHorizontal: 12, paddingVertical: 11, fontSize: 14, color: Colors.text,
+    minHeight: 80, textAlignVertical: 'top', marginBottom: 4,
+  },
+
+  // Type chips
+  chipScroll: { marginBottom: 18 },
+  chipRow: { flexDirection: 'row', gap: 8, paddingBottom: 2 },
+  chip: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: Colors.background, borderRadius: 20,
+    borderWidth: 1.5, borderColor: Colors.border,
+    paddingHorizontal: 12, paddingVertical: 7,
+  },
+  chipDot: { width: 8, height: 8, borderRadius: 4 },
+  chipText: { fontSize: 13, color: Colors.textSecondary, fontWeight: '500' },
 })

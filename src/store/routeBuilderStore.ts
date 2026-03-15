@@ -171,7 +171,11 @@ interface RouteBuilderState {
   removeStop: (stopId: string, getCoords: (id: string) => PlaceCoord | null) => void
   moveStop: (fromIndex: number, toIndex: number, getCoords: (id: string) => PlaceCoord | null) => void
   updateStopNotes: (stopId: string, notes: string) => void
+  updateStopName: (stopId: string, name: string) => void
+  updateStopType: (stopId: string, type: string) => void
   updateStopStayDays: (stopId: string, days: number) => void
+  /** Load a saved route back into the draft for continued editing */
+  loadRouteAsDraft: (routeId: string) => void
 
   // Saving
   saveDraft: (getCoords: (id: string) => PlaceCoord | null, status?: UserRouteStatus) => UserRoute | null
@@ -316,6 +320,32 @@ export const useRouteBuilderStore = create<RouteBuilderState>((set, get) => ({
     })
   },
 
+  updateStopName: (stopId, name) => {
+    set((s) => {
+      if (!s.draftRoute) return {}
+      return {
+        draftRoute: {
+          ...s.draftRoute,
+          stops: s.draftRoute.stops.map((st) => st.id === stopId ? { ...st, name } : st),
+          updatedAt: new Date().toISOString(),
+        },
+      }
+    })
+  },
+
+  updateStopType: (stopId, type) => {
+    set((s) => {
+      if (!s.draftRoute) return {}
+      return {
+        draftRoute: {
+          ...s.draftRoute,
+          stops: s.draftRoute.stops.map((st) => st.id === stopId ? { ...st, type } : st),
+          updatedAt: new Date().toISOString(),
+        },
+      }
+    })
+  },
+
   updateStopNotes: (stopId, notes) => {
     set((s) => {
       if (!s.draftRoute) return {}
@@ -362,7 +392,9 @@ export const useRouteBuilderStore = create<RouteBuilderState>((set, get) => ({
       ? [route, ...savedRoutes]
       : savedRoutes.map((r, i) => (i === existing ? route : r))
 
-    set({ savedRoutes: updated, draftRoute: null })
+    // Keep draftRoute alive — user can press back from the detail screen
+    // to continue editing. Only discardDraft() or startNewRoute() clears it.
+    set({ savedRoutes: updated })
     get().saveRoutes()
     // Only award points the first time a route is saved (not on subsequent edits)
     if (isNew) useContributorStore.getState().earnPoints('CREATE_ROUTE', route.id)
@@ -417,6 +449,11 @@ export const useRouteBuilderStore = create<RouteBuilderState>((set, get) => ({
       ),
     }))
     get().saveRoutes()
+  },
+
+  loadRouteAsDraft: (routeId) => {
+    const route = get().savedRoutes.find((r) => r.id === routeId)
+    if (route) set({ draftRoute: { ...route } })
   },
 
   loadRoutes: async () => {

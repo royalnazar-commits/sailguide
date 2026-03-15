@@ -27,12 +27,22 @@ import { PurchaseModal } from '../components/PurchaseModal'
 
 const STOP_COLORS = ['#1B6CA8', '#22C55E', '#F59E0B', '#EF4444', '#8B5CF6', '#00B4D8', '#F97316']
 
+const STOP_TYPE_COLORS: Record<string, string> = {
+  MARINA: '#1B6CA8', ANCHORAGE: '#22C55E', BAY: '#00B4D8',
+  BEACH: '#FF7043', LAGOON: '#0891B2', CAVE: '#7C3AED', FUEL: '#F59E0B', CUSTOM: '#64748B',
+}
+
+const STOP_TYPE_LABELS: Record<string, string> = {
+  MARINA: 'Marina', ANCHORAGE: 'Anchorage', BAY: 'Bay',
+  BEACH: 'Beach', LAGOON: 'Lagoon', CAVE: 'Cave', FUEL: 'Fuel stop', CUSTOM: '',
+}
+
 export default function UserRouteDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>()
   const insets = useSafeAreaInsets()
   const mapRef = useRef<MapView>(null)
 
-  const { getRoute, savedRoutes, deleteRoute, publishRoute, unpublishRoute } = useRouteBuilderStore()
+  const { getRoute, savedRoutes, deleteRoute, publishRoute, unpublishRoute, loadRouteAsDraft } = useRouteBuilderStore()
   const { user } = useAuthStore()
   const { userPlaces } = usePlacesStore()
   const { hasAccessToRoute, purchaseItem } = useCaptainStore()
@@ -59,21 +69,43 @@ export default function UserRouteDetailScreen() {
   const captainId = route.captainId ?? route.createdBy ?? ''
   const isLocked = !!(route.isPremium && !isOwned && !hasAccessToRoute(route.id, captainId, user?.id))
 
-  const stopPlaces = route.stops
-    .map((s) => ({ stop: s, place: allPlaces.find((p) => p.id === s.placeId) as Place | undefined }))
-    .filter((item): item is { stop: typeof item.stop; place: Place } => !!item.place)
+  // Support both place-backed stops and custom map-tap waypoints (stop.lat / stop.lng)
+  const stopItems = route.stops
+    .map((stop, i) => {
+      const place = allPlaces.find((p) => p.id === stop.placeId)
+      const lat = place?.lat ?? stop.lat
+      const lng = place?.lng ?? stop.lng
+      if (lat == null || lng == null) return null
+      return {
+        stop,
+        place,
+        lat,
+        lng,
+        name: place?.name ?? stop.name ?? `Stop ${i + 1}`,
+        location: place
+          ? `${place.region} · ${place.country}`
+          : `${lat.toFixed(4)}°, ${lng.toFixed(4)}°`,
+      }
+    })
+    .filter((x): x is NonNullable<typeof x> => x !== null)
 
-  const polylineCoords = stopPlaces.map((item) => ({
-    latitude: item.place.lat,
-    longitude: item.place.lng,
+  const polylineCoords = stopItems.map((item) => ({
+    latitude: item.lat,
+    longitude: item.lng,
   }))
 
   const handleFitMap = () => {
     if (polylineCoords.length === 0) return
     mapRef.current?.fitToCoordinates(polylineCoords, {
-      edgePadding: { top: 60, right: 40, bottom: 40, left: 40 },
+      edgePadding: { top: 60, right: 40, bottom: 60, left: 40 },
       animated: true,
     })
+  }
+
+  // Edit: load this route as draft and return to the builder
+  const handleEdit = () => {
+    loadRouteAsDraft(route.id)
+    router.replace('/route-builder')
   }
 
   const handleDelete = () => {
@@ -199,13 +231,22 @@ export default function UserRouteDetailScreen() {
         </TouchableOpacity>
         <Text style={styles.headerTitle} numberOfLines={1}>{route.title}</Text>
         {isOwned && (
-          <TouchableOpacity
-            onPress={handleDelete}
-            style={styles.deleteBtn}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          >
-            <Ionicons name="trash-outline" size={20} color={Colors.danger} />
-          </TouchableOpacity>
+          <View style={styles.headerActions}>
+            <TouchableOpacity
+              onPress={handleEdit}
+              style={styles.editBtn}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <Ionicons name="create-outline" size={20} color={Colors.secondary} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={handleDelete}
+              style={styles.deleteBtn}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <Ionicons name="trash-outline" size={20} color={Colors.danger} />
+            </TouchableOpacity>
+          </View>
         )}
       </View>
 
@@ -238,11 +279,12 @@ export default function UserRouteDetailScreen() {
                 lineDashPattern={[6, 4]}
               />
             )}
-            {stopPlaces.map((item, i) => (
+            {stopItems.map((item, i) => (
               <Marker
                 key={item.stop.id}
-                coordinate={{ latitude: item.place.lat, longitude: item.place.lng }}
+                coordinate={{ latitude: item.lat, longitude: item.lng }}
                 tracksViewChanges={false}
+                anchor={{ x: 0.5, y: 0.5 }}
               >
                 <View style={[styles.mapPin, { backgroundColor: STOP_COLORS[i % STOP_COLORS.length] }]}>
                   <Text style={styles.mapPinText}>{i + 1}</Text>
@@ -278,10 +320,10 @@ export default function UserRouteDetailScreen() {
         {isOwned && route.status === 'DRAFT' && (
           <TouchableOpacity style={styles.publishBanner} onPress={handlePublish} activeOpacity={0.85}>
             <View style={styles.publishBannerLeft}>
-              <Ionicons name="earth-outline" size={20} color={Colors.secondary} />
+              <Ionicons name="earth-outline" size={18} color={Colors.textSecondary} />
               <View>
-                <Text style={styles.publishBannerTitle}>Share with the community</Text>
-                <Text style={styles.publishBannerSub}>Publish so other sailors can discover this route</Text>
+                <Text style={styles.publishBannerTitle}>Share with community</Text>
+                <Text style={styles.publishBannerSub}>Optional — publish so other sailors can discover this route</Text>
               </View>
             </View>
             <View style={styles.publishBannerBtn}>
@@ -325,42 +367,52 @@ export default function UserRouteDetailScreen() {
 
         {/* Stops */}
         <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Stops</Text>
+          <Text style={styles.sectionLabel}>Stops ({stopItems.length})</Text>
           <View style={styles.stopsList}>
-            {stopPlaces.map((item, i) => {
+            {stopItems.map((item, i) => {
+              const next = stopItems[i + 1]
               let legNm: number | null = null
-              if (i < stopPlaces.length - 1) {
-                const next = stopPlaces[i + 1]
+              if (next) {
                 const R = 3440.065
-                const dLat = ((next.place.lat - item.place.lat) * Math.PI) / 180
-                const dLng = ((next.place.lng - item.place.lng) * Math.PI) / 180
+                const dLat = ((next.lat - item.lat) * Math.PI) / 180
+                const dLng = ((next.lng - item.lng) * Math.PI) / 180
                 const a = Math.sin(dLat / 2) ** 2 +
-                  Math.cos((item.place.lat * Math.PI) / 180) *
-                  Math.cos((next.place.lat * Math.PI) / 180) *
+                  Math.cos((item.lat * Math.PI) / 180) *
+                  Math.cos((next.lat * Math.PI) / 180) *
                   Math.sin(dLng / 2) ** 2
                 legNm = Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) * 10) / 10
               }
+              const stopColor = STOP_TYPE_COLORS[item.stop.type ?? 'CUSTOM'] ?? STOP_TYPE_COLORS.CUSTOM
+              const stopTypeLabel = STOP_TYPE_LABELS[item.stop.type ?? 'CUSTOM']
               return (
                 <View key={item.stop.id} style={styles.stopRow}>
                   <View style={styles.seqCol}>
                     <View style={[styles.seqDot, { backgroundColor: STOP_COLORS[i % STOP_COLORS.length] }]}>
                       <Text style={styles.seqDotText}>{i + 1}</Text>
                     </View>
-                    {i < stopPlaces.length - 1 && <View style={styles.seqLine} />}
+                    {i < stopItems.length - 1 && <View style={styles.seqLine} />}
                   </View>
 
                   <TouchableOpacity
                     style={styles.stopCard}
-                    onPress={() => router.push(`/place/${item.place.id}`)}
-                    activeOpacity={0.85}
+                    onPress={() => item.place ? router.push(`/place/${item.place.id}`) : undefined}
+                    activeOpacity={item.place ? 0.85 : 1}
                   >
                     <View style={styles.stopCardTop}>
                       <View style={{ flex: 1 }}>
-                        <Text style={styles.stopName}>{item.place.name}</Text>
-                        <Text style={styles.stopLocation}>{item.place.region} · {item.place.country}</Text>
+                        <Text style={styles.stopName}>{item.name}</Text>
+                        <Text style={styles.stopLocation}>{item.location}</Text>
                       </View>
-                      <Ionicons name="chevron-forward" size={16} color={Colors.textMuted} />
+                      {item.place && <Ionicons name="chevron-forward" size={16} color={Colors.textMuted} />}
                     </View>
+
+                    {/* Type badge (shown when not CUSTOM) */}
+                    {item.stop.type && item.stop.type !== 'CUSTOM' && stopTypeLabel && (
+                      <View style={[styles.typeBadge, { backgroundColor: stopColor + '18' }]}>
+                        <View style={[styles.typeDot, { backgroundColor: stopColor }]} />
+                        <Text style={[styles.typeBadgeText, { color: stopColor }]}>{stopTypeLabel}</Text>
+                      </View>
+                    )}
 
                     {(item.stop.estimatedStayDays ?? 0) > 0 && (
                       <View style={styles.stayRow}>
@@ -374,7 +426,7 @@ export default function UserRouteDetailScreen() {
                     {item.stop.notes ? (
                       <View style={styles.notesCard}>
                         <Ionicons name="document-text-outline" size={12} color={Colors.warning} />
-                        <Text style={styles.notesText} numberOfLines={2}>{item.stop.notes}</Text>
+                        <Text style={styles.notesText} numberOfLines={3}>{item.stop.notes}</Text>
                       </View>
                     ) : null}
 
@@ -468,6 +520,11 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.background, alignItems: 'center', justifyContent: 'center',
   },
   headerTitle: { flex: 1, fontSize: 17, fontWeight: '700', color: Colors.text },
+  headerActions: { flexDirection: 'row', gap: 8, alignItems: 'center' },
+  editBtn: {
+    width: 38, height: 38, borderRadius: 19,
+    backgroundColor: Colors.secondary + '12', alignItems: 'center', justifyContent: 'center',
+  },
   deleteBtn: {
     width: 38, height: 38, borderRadius: 19,
     backgroundColor: Colors.danger + '10', alignItems: 'center', justifyContent: 'center',
@@ -511,19 +568,20 @@ const styles = StyleSheet.create({
   publishBanner: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     marginHorizontal: 16, marginBottom: 8,
-    backgroundColor: Colors.secondary + '10',
-    borderRadius: 14, padding: 14,
-    borderWidth: 1, borderColor: Colors.secondary + '30',
+    backgroundColor: Colors.background,
+    borderRadius: 14, padding: 12,
+    borderWidth: 1, borderColor: Colors.border,
     gap: 12,
   },
   publishBannerLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
-  publishBannerTitle: { fontSize: 14, fontWeight: '700', color: Colors.secondary },
-  publishBannerSub: { fontSize: 12, color: Colors.textSecondary, marginTop: 1 },
+  publishBannerTitle: { fontSize: 13, fontWeight: '600', color: Colors.textSecondary },
+  publishBannerSub: { fontSize: 11, color: Colors.textMuted, marginTop: 1 },
   publishBannerBtn: {
-    backgroundColor: Colors.secondary, borderRadius: 10,
-    paddingHorizontal: 16, paddingVertical: 8,
+    backgroundColor: Colors.background, borderRadius: 10,
+    paddingHorizontal: 12, paddingVertical: 6,
+    borderWidth: 1, borderColor: Colors.border,
   },
-  publishBannerBtnText: { fontSize: 14, fontWeight: '700', color: '#fff' },
+  publishBannerBtnText: { fontSize: 13, fontWeight: '600', color: Colors.textSecondary },
 
   // Published banner (published state)
   publishedBanner: {
@@ -576,6 +634,12 @@ const styles = StyleSheet.create({
   stopLocation: { fontSize: 12, color: Colors.textMuted, marginTop: 2 },
   stayRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 6 },
   stayText: { fontSize: 12, color: Colors.textMuted },
+  typeBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    alignSelf: 'flex-start', borderRadius: 8, paddingHorizontal: 7, paddingVertical: 3, marginTop: 6,
+  },
+  typeDot: { width: 6, height: 6, borderRadius: 3 },
+  typeBadgeText: { fontSize: 11, fontWeight: '600' },
   notesCard: {
     flexDirection: 'row', alignItems: 'flex-start', gap: 6,
     backgroundColor: Colors.warning + '10', borderRadius: 8, padding: 8, marginTop: 8,

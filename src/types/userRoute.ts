@@ -21,6 +21,11 @@ export interface UserRouteStop {
   lng?: number
   /** Display name for custom waypoints */
   name?: string
+  /**
+   * Stop type badge — MARINA, ANCHORAGE, BAY, BEACH, CAVE, LAGOON, FUEL, CUSTOM.
+   * Defaults to CUSTOM when not set.
+   */
+  type?: string
 }
 
 export interface UserRoute {
