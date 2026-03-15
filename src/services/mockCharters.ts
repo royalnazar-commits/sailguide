@@ -42,7 +42,7 @@ export const MOCK_YACHTS: Yacht[] = [
     rating: 4.9,
     reviewCount: 38,
     images: [
-      'https://images.unsplash.com/photo-1473116763249-2faaef81ccda?w=900&q=80',
+      'https://loremflickr.com/900/600/sailing,yacht?lock=4',
       'https://images.unsplash.com/photo-1570077188670-e3a8d69ac5ff?w=900&q=80',
       'https://images.unsplash.com/photo-1505118380757-91f5f5632de0?w=900&q=80',
       'https://images.unsplash.com/photo-1519046904884-53103b34b206?w=900&q=80',
@@ -87,7 +87,7 @@ export const MOCK_YACHTS: Yacht[] = [
     rating: 4.8,
     reviewCount: 52,
     images: [
-      'https://images.unsplash.com/photo-1505118380757-91f5f5632de0?w=900&q=80',
+      'https://loremflickr.com/900/600/catamaran?lock=1',
       'https://images.unsplash.com/photo-1473116763249-2faaef81ccda?w=900&q=80',
       'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=900&q=80',
       'https://images.unsplash.com/photo-1519046904884-53103b34b206?w=900&q=80',
@@ -132,7 +132,7 @@ export const MOCK_YACHTS: Yacht[] = [
     rating: 4.7,
     reviewCount: 29,
     images: [
-      'https://images.unsplash.com/photo-1473116763249-2faaef81ccda?w=900&q=80',
+      'https://loremflickr.com/900/600/sailing,yacht?lock=5',
       'https://images.unsplash.com/photo-1570077188670-e3a8d69ac5ff?w=900&q=80',
       'https://images.unsplash.com/photo-1504855264-1ea0b27f2d11?w=900&q=80',
     ],
@@ -175,7 +175,7 @@ export const MOCK_YACHTS: Yacht[] = [
     rating: 5.0,
     reviewCount: 14,
     images: [
-      'https://images.unsplash.com/photo-1519058082700-08a0b56da9b4?w=900&q=80',
+      'https://loremflickr.com/900/600/sailing,yacht?lock=6',
       'https://images.unsplash.com/photo-1533105079780-92b9be482077?w=900&q=80',
       'https://images.unsplash.com/photo-1505118380757-91f5f5632de0?w=900&q=80',
       'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=900&q=80',
@@ -222,7 +222,7 @@ export const MOCK_YACHTS: Yacht[] = [
     rating: 4.7,
     reviewCount: 44,
     images: [
-      'https://images.unsplash.com/photo-1559827291-72f26c64aa40?w=900&q=80',
+      'https://loremflickr.com/900/600/sailing,yacht?lock=4',
       'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=900&q=80',
       'https://images.unsplash.com/photo-1473116763249-2faaef81ccda?w=900&q=80',
     ],
@@ -266,7 +266,7 @@ export const MOCK_YACHTS: Yacht[] = [
     rating: 4.9,
     reviewCount: 31,
     images: [
-      'https://images.unsplash.com/photo-1559827291-72f26c64aa40?w=900&q=80',
+      'https://loremflickr.com/900/600/catamaran?lock=1',
       'https://images.unsplash.com/photo-1473116763249-2faaef81ccda?w=900&q=80',
       'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=900&q=80',
     ],
@@ -310,9 +310,9 @@ export const MOCK_YACHTS: Yacht[] = [
     rating: 4.8,
     reviewCount: 22,
     images: [
-      'https://images.unsplash.com/photo-1519058082700-08a0b56da9b4?w=900&q=80',
+      'https://loremflickr.com/900/600/sailing,yacht?lock=5',
       'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=900&q=80',
-      'https://images.unsplash.com/photo-1502680390469-be75c86b636f?w=900&q=80',
+      'https://images.unsplash.com/photo-1473116763249-2faaef81ccda?w=900&q=80',
     ],
     description:
       'Based in the beautiful Pakleni islands just off Hvar town, Hvar Sun lets you step straight into the best cruising ground in Croatia. The Elan 45 is a spirited performer that will delight sailors who enjoy a proper sailing experience alongside stunning island scenery.',
@@ -355,7 +355,7 @@ export const MOCK_YACHTS: Yacht[] = [
     rating: 4.6,
     reviewCount: 33,
     images: [
-      'https://images.unsplash.com/photo-1505118380757-91f5f5632de0?w=900&q=80',
+      'https://loremflickr.com/900/600/sailing,yacht?lock=6',
       'https://images.unsplash.com/photo-1519046904884-53103b34b206?w=900&q=80',
       'https://images.unsplash.com/photo-1473116763249-2faaef81ccda?w=900&q=80',
     ],
@@ -398,9 +398,9 @@ export const MOCK_YACHTS: Yacht[] = [
     rating: 4.9,
     reviewCount: 19,
     images: [
-      'https://images.unsplash.com/photo-1473116763249-2faaef81ccda?w=900&q=80',
+      'https://loremflickr.com/900/600/sailing,yacht?lock=4',
       'https://images.unsplash.com/photo-1516483638261-f4dbaf036963?w=900&q=80',
-      'https://images.unsplash.com/photo-1502680390469-be75c86b636f?w=900&q=80',
+      'https://images.unsplash.com/photo-1473116763249-2faaef81ccda?w=900&q=80',
       'https://images.unsplash.com/photo-1467269204594-9661b134dd2b?w=900&q=80',
     ],
     description:
@@ -445,7 +445,7 @@ export const MOCK_YACHTS: Yacht[] = [
     rating: 4.8,
     reviewCount: 26,
     images: [
-      'https://images.unsplash.com/photo-1473116763249-2faaef81ccda?w=900&q=80',
+      'https://loremflickr.com/900/600/sailing,yacht?lock=5',
       'https://images.unsplash.com/photo-1533105079780-92b9be482077?w=900&q=80',
       'https://images.unsplash.com/photo-1504855264-1ea0b27f2d11?w=900&q=80',
     ],
@@ -489,7 +489,7 @@ export const MOCK_YACHTS: Yacht[] = [
     rating: 4.9,
     reviewCount: 17,
     images: [
-      'https://images.unsplash.com/photo-1505118380757-91f5f5632de0?w=900&q=80',
+      'https://loremflickr.com/900/600/catamaran?lock=1',
       'https://images.unsplash.com/photo-1473116763249-2faaef81ccda?w=900&q=80',
       'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=900&q=80',
       'https://images.unsplash.com/photo-1519046904884-53103b34b206?w=900&q=80',
@@ -537,7 +537,7 @@ export const MOCK_YACHTS: Yacht[] = [
     rating: 4.8,
     reviewCount: 41,
     images: [
-      'https://images.unsplash.com/photo-1519058082700-08a0b56da9b4?w=900&q=80',
+      'https://loremflickr.com/900/600/gulet,turkey?lock=2',
       'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=900&q=80',
       'https://images.unsplash.com/photo-1519046904884-53103b34b206?w=900&q=80',
       'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=900&q=80',
@@ -582,7 +582,7 @@ export const MOCK_YACHTS: Yacht[] = [
     rating: 4.6,
     reviewCount: 28,
     images: [
-      'https://images.unsplash.com/photo-1519058082700-08a0b56da9b4?w=900&q=80',
+      'https://loremflickr.com/900/600/sailing,yacht?lock=6',
       'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=900&q=80',
       'https://images.unsplash.com/photo-1504855264-1ea0b27f2d11?w=900&q=80',
     ],
@@ -627,7 +627,7 @@ export const MOCK_YACHTS: Yacht[] = [
     rating: 4.9,
     reviewCount: 23,
     images: [
-      'https://images.unsplash.com/photo-1559827291-72f26c64aa40?w=900&q=80',
+      'https://loremflickr.com/900/600/catamaran?lock=1',
       'https://images.unsplash.com/photo-1505118380757-91f5f5632de0?w=900&q=80',
       'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=900&q=80',
       'https://images.unsplash.com/photo-1519046904884-53103b34b206?w=900&q=80',
@@ -675,7 +675,7 @@ export const MOCK_YACHTS: Yacht[] = [
     rating: 4.8,
     reviewCount: 12,
     images: [
-      'https://images.unsplash.com/photo-1577394779877-f5e73dc3d6b0?w=900&q=80',
+      'https://loremflickr.com/900/600/luxury,yacht?lock=2',
       'https://images.unsplash.com/photo-1605281317010-fe5ffe798166?w=900&q=80',
       'https://images.unsplash.com/photo-1596464716127-f2a82984de30?w=900&q=80',
     ],
@@ -720,7 +720,7 @@ export const MOCK_YACHTS: Yacht[] = [
     rating: 4.7,
     reviewCount: 8,
     images: [
-      'https://images.unsplash.com/photo-1605281317010-fe5ffe798166?w=900&q=80',
+      'https://loremflickr.com/900/600/powerboat,yacht?lock=1',
       'https://images.unsplash.com/photo-1577394779877-f5e73dc3d6b0?w=900&q=80',
       'https://images.unsplash.com/photo-1596464716127-f2a82984de30?w=900&q=80',
     ],
@@ -764,7 +764,7 @@ export const MOCK_YACHTS: Yacht[] = [
     rating: 4.9,
     reviewCount: 7,
     images: [
-      'https://images.unsplash.com/photo-1596464716127-f2a82984de30?w=900&q=80',
+      'https://loremflickr.com/900/600/luxury,yacht?lock=2',
       'https://images.unsplash.com/photo-1577394779877-f5e73dc3d6b0?w=900&q=80',
       'https://images.unsplash.com/photo-1605281317010-fe5ffe798166?w=900&q=80',
     ],
