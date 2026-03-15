@@ -10,18 +10,20 @@ import { SEED_ROUTES, getPointsForRoute } from '../data/seedRoutes'
 import { Colors } from '../constants/colors'
 import { SafetyBanner } from '../components/SafetyBanner'
 import { CaptainBadge } from '../components/CaptainBadge'
-import { SaveRouteButton } from '../components/SaveRouteButton'
 import { RouteItinerary } from '../components/RouteItinerary'
+import { useProfileStore } from '../store/profileStore'
 
 const difficultyColors = { EASY: Colors.success, MODERATE: Colors.warning, ADVANCED: Colors.danger }
 
 export default function RouteDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>()
   const insets = useSafeAreaInsets()
+  const { savedRoutes, toggleSaveRoute } = useProfileStore()
 
   const route = SEED_ROUTES.find((r) => r.id === id)
   if (!route) return null
 
+  const isSaved = savedRoutes.includes(route.id)
   const routePoints = getPointsForRoute(route.id)
 
   return (
@@ -31,8 +33,15 @@ export default function RouteDetailScreen() {
         source={{ uri: route.previewPhotos[0] || 'https://images.unsplash.com/photo-1505118380757-91f5f5632de0?w=800' }}
         style={styles.heroImage}
       />
-      <TouchableOpacity style={[styles.backBtn, { top: insets.top + 12 }]} onPress={() => router.back()}>
+      <TouchableOpacity style={[styles.backBtn, { top: insets.top + 12 }]} onPress={() => router.back()} activeOpacity={0.7}>
         <Ionicons name="arrow-back" size={22} color="#fff" />
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={[styles.bookmarkBtn, { top: insets.top + 12 }]}
+        onPress={() => toggleSaveRoute(route.id)}
+        activeOpacity={0.7}
+      >
+        <Ionicons name={isSaved ? 'bookmark' : 'bookmark-outline'} size={22} color={isSaved ? Colors.secondary : '#fff'} />
       </TouchableOpacity>
 
       <View style={styles.body}>
@@ -98,7 +107,7 @@ export default function RouteDetailScreen() {
         </View>
 
         {/* Map preview button */}
-        <TouchableOpacity style={styles.mapPreviewBtn} onPress={() => router.push(`/route/${id}/map`)}>
+        <TouchableOpacity style={styles.mapPreviewBtn} onPress={() => router.push(`/route/${id}/map`)} activeOpacity={0.7}>
           <Ionicons name="map-outline" size={20} color={Colors.secondary} />
           <Text style={styles.mapPreviewText}>View Route Map</Text>
           <Ionicons name="chevron-forward" size={16} color={Colors.secondary} />
@@ -114,8 +123,7 @@ export default function RouteDetailScreen() {
 
       {/* Bottom bar */}
       <View style={[styles.bottomBar, { paddingBottom: Math.max(16, insets.bottom) }]}>
-        <SaveRouteButton routeId={route.id} />
-        <TouchableOpacity style={styles.navigateBtn} onPress={() => router.push(`/route/${id}/map`)}>
+        <TouchableOpacity style={styles.navigateBtn} onPress={() => router.push(`/route/${id}/map`)} activeOpacity={0.7}>
           <Ionicons name="navigate" size={18} color="#fff" />
           <Text style={styles.navigateText}>View on Map</Text>
         </TouchableOpacity>
@@ -139,6 +147,11 @@ const styles = StyleSheet.create({
   heroImage: { width: '100%', height: 280 },
   backBtn: {
     position: 'absolute', left: 16,
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: 'rgba(0,0,0,0.35)', alignItems: 'center', justifyContent: 'center',
+  },
+  bookmarkBtn: {
+    position: 'absolute', right: 16,
     width: 40, height: 40, borderRadius: 20,
     backgroundColor: 'rgba(0,0,0,0.35)', alignItems: 'center', justifyContent: 'center',
   },

@@ -2,9 +2,11 @@ import React, { useRef, useState, useCallback } from 'react'
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   Modal, Animated, TouchableWithoutFeedback, Platform,
+  PanResponder, Dimensions,
 } from 'react-native'
 import { router } from 'expo-router'
 import { Ionicons } from '@expo/vector-icons'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { RoutePoint } from '../types'
 import { Colors } from '../constants/colors'
 
@@ -14,6 +16,7 @@ const CARD_W = 168
 const CARD_GAP = 12
 const SNAP = CARD_W + CARD_GAP
 const SHEET_MAX = 520
+const SCREEN_W = Dimensions.get('window').width
 
 const TYPE_COLOR: Record<string, string> = {
   MARINA:    '#1E3A5F',
@@ -87,28 +90,34 @@ interface Props {
 }
 
 export function RouteItinerary({ points, routeId }: Props) {
-  const [activeLeg, setActiveLeg] = useState<Leg | null>(null)
+  const [activeLegIndex, setActiveLegIndex] = useState<number | null>(null)
   const translateY = useRef(new Animated.Value(SHEET_MAX)).current
+  const pagerRef = useRef<ScrollView>(null)
+  const insets = useSafeAreaInsets()
 
   const legs = buildLegs(points)
   if (legs.length === 0) return null
 
   const openSheet = useCallback((leg: Leg) => {
-    setActiveLeg(leg)
+    const idx = legs.findIndex((l) => l.day === leg.day)
+    setActiveLegIndex(idx)
     Animated.spring(translateY, {
       toValue: 0,
       useNativeDriver: true,
       friction: 10,
       tension: 70,
-    }).start()
-  }, [translateY])
+    }).start(() => {
+      // Scroll pager to the correct page after open animation
+      pagerRef.current?.scrollTo({ x: idx * SCREEN_W, animated: false })
+    })
+  }, [translateY, legs])
 
   const closeSheet = useCallback(() => {
     Animated.timing(translateY, {
       toValue: SHEET_MAX,
       duration: 260,
       useNativeDriver: true,
-    }).start(() => setActiveLeg(null))
+    }).start(() => setActiveLegIndex(null))
   }, [translateY])
 
   const viewOnMap = useCallback((leg: Leg) => {
@@ -117,6 +126,40 @@ export function RouteItinerary({ points, routeId }: Props) {
       router.push(`/route/${routeId}/map?focusStop=${leg.to.sequence}`)
     }, 280)
   }, [routeId, closeSheet])
+
+  const goToPage = useCallback((idx: number) => {
+    if (idx < 0 || idx >= legs.length) return
+    setActiveLegIndex(idx)
+    pagerRef.current?.scrollTo({ x: idx * SCREEN_W, animated: true })
+  }, [legs.length])
+
+  // PanResponder for swipe-down-to-close on the handle area
+  const swipeDownPan = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_e, gs) =>
+        Math.abs(gs.dy) > 8 && Math.abs(gs.dy) > Math.abs(gs.dx),
+      onPanResponderMove: (_e, gs) => {
+        if (gs.dy > 0) {
+          translateY.setValue(gs.dy)
+        }
+      },
+      onPanResponderRelease: (_e, gs) => {
+        if (gs.dy > 60) {
+          closeSheet()
+        } else {
+          Animated.spring(translateY, {
+            toValue: 0,
+            useNativeDriver: true,
+            friction: 10,
+            tension: 80,
+          }).start()
+        }
+      },
+    })
+  ).current
+
+  const activeLeg = activeLegIndex !== null ? legs[activeLegIndex] : null
 
   return (
     <View style={styles.wrapper}>
@@ -155,7 +198,60 @@ export function RouteItinerary({ points, routeId }: Props) {
           style={[styles.sheet, { transform: [{ translateY }] }]}
           pointerEvents="box-none"
         >
-          {activeLeg && <SheetContent leg={activeLeg} onClose={closeSheet} onViewMap={viewOnMap} />}
+          {/* Drag handle with PanResponder for swipe-down-to-close */}
+          <View {...swipeDownPan.panHandlers} style={styles.handleHitArea}>
+            <View style={styles.sheetHandle} />
+          </View>
+
+          {activeLegIndex !== null && (
+            <>
+              {/* Day navigation arrows */}
+              <View style={styles.pagerNav} pointerEvents="box-none">
+                <TouchableOpacity
+                  style={[styles.navArrow, activeLegIndex === 0 && styles.navArrowDisabled]}
+                  onPress={() => goToPage(activeLegIndex - 1)}
+                  disabled={activeLegIndex === 0}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="chevron-back" size={20} color={activeLegIndex === 0 ? Colors.border : Colors.secondary} />
+                </TouchableOpacity>
+                <Text style={styles.pagerLabel}>Day {legs[activeLegIndex]?.day} of {legs.length}</Text>
+                <TouchableOpacity
+                  style={[styles.navArrow, activeLegIndex === legs.length - 1 && styles.navArrowDisabled]}
+                  onPress={() => goToPage(activeLegIndex + 1)}
+                  disabled={activeLegIndex === legs.length - 1}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="chevron-forward" size={20} color={activeLegIndex === legs.length - 1 ? Colors.border : Colors.secondary} />
+                </TouchableOpacity>
+              </View>
+
+              {/* Horizontal pager for days */}
+              <ScrollView
+                ref={pagerRef}
+                horizontal
+                pagingEnabled
+                showsHorizontalScrollIndicator={false}
+                scrollEventThrottle={16}
+                onMomentumScrollEnd={(e) => {
+                  const page = Math.round(e.nativeEvent.contentOffset.x / SCREEN_W)
+                  setActiveLegIndex(page)
+                }}
+                style={styles.pager}
+              >
+                {legs.map((leg, idx) => (
+                  <View key={leg.day} style={{ width: SCREEN_W }}>
+                    <SheetContent
+                      leg={leg}
+                      onClose={closeSheet}
+                      onViewMap={viewOnMap}
+                      safeBottom={insets.bottom}
+                    />
+                  </View>
+                ))}
+              </ScrollView>
+            </>
+          )}
         </Animated.View>
       </Modal>
     </View>
@@ -172,7 +268,7 @@ function DayCard({ leg, onPress }: { leg: Leg; onPress: (l: Leg) => void }) {
     <TouchableOpacity
       style={[styles.card, { borderLeftColor: accentColor }]}
       onPress={() => onPress(leg)}
-      activeOpacity={0.82}
+      activeOpacity={0.7}
     >
       {/* Day badge */}
       <View style={styles.cardDayRow}>
@@ -217,8 +313,8 @@ function DayCard({ leg, onPress }: { leg: Leg; onPress: (l: Leg) => void }) {
 // ─── Sheet Content ────────────────────────────────────────────────────────────
 
 function SheetContent({
-  leg, onClose, onViewMap,
-}: { leg: Leg; onClose: () => void; onViewMap: (l: Leg) => void }) {
+  leg, onClose, onViewMap, safeBottom,
+}: { leg: Leg; onClose: () => void; onViewMap: (l: Leg) => void; safeBottom: number }) {
   const accentColor = TYPE_COLOR[leg.to.type] ?? Colors.primary
   const hasDistance = (leg.to.distanceFromPrevNm ?? 0) > 0
 
@@ -226,17 +322,14 @@ function SheetContent({
     <ScrollView
       bounces={false}
       showsVerticalScrollIndicator={false}
-      contentContainerStyle={styles.sheetContent}
+      contentContainerStyle={[styles.sheetContent, { paddingBottom: Math.max(40, safeBottom + 24) }]}
     >
-      {/* Handle */}
-      <View style={styles.sheetHandle} />
-
       {/* Header */}
       <View style={styles.sheetHeaderRow}>
         <View style={[styles.sheetDayBadge, { backgroundColor: accentColor + '18' }]}>
           <Text style={[styles.sheetDayText, { color: accentColor }]}>DAY {leg.day}</Text>
         </View>
-        <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+        <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} activeOpacity={0.7}>
           <View style={styles.closeBtn}>
             <Ionicons name="close" size={18} color={Colors.textSecondary} />
           </View>
@@ -316,7 +409,7 @@ function SheetContent({
       <TouchableOpacity
         style={[styles.mapBtn, { backgroundColor: accentColor }]}
         onPress={() => onViewMap(leg)}
-        activeOpacity={0.85}
+        activeOpacity={0.7}
       >
         <Ionicons name="map-outline" size={18} color="#fff" />
         <Text style={styles.mapBtnText}>View this leg on map</Text>
@@ -395,8 +488,35 @@ const styles = StyleSheet.create({
       android: { elevation: 16 },
     }),
   },
-  sheetContent: { paddingHorizontal: 20, paddingBottom: 40 },
-  sheetHandle: { width: 40, height: 4, borderRadius: 2, backgroundColor: Colors.border, alignSelf: 'center', marginTop: 10, marginBottom: 16 },
+
+  // Handle area (touch target for swipe-down)
+  handleHitArea: {
+    alignItems: 'center',
+    paddingTop: 10,
+    paddingBottom: 8,
+  },
+  sheetHandle: { width: 40, height: 4, borderRadius: 2, backgroundColor: Colors.border },
+
+  // Pager navigation row
+  pagerNav: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+  },
+  pagerLabel: { fontSize: 13, fontWeight: '600', color: Colors.textSecondary },
+  navArrow: {
+    width: 32, height: 32, borderRadius: 16,
+    backgroundColor: Colors.background,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  navArrowDisabled: { opacity: 0.3 },
+
+  // Pager scroll view
+  pager: { flex: 1 },
+
+  sheetContent: { paddingHorizontal: 20 },
 
   sheetHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
   sheetDayBadge: { borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5 },

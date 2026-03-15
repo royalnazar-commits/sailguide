@@ -1,7 +1,7 @@
 import React, { useRef, useCallback, useMemo, useState, useEffect } from 'react'
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  ActivityIndicator, Animated, ScrollView,
+  ActivityIndicator, Animated, ScrollView, PanResponder,
 } from 'react-native'
 import MapView, { Marker, Polyline, PROVIDER_DEFAULT } from 'react-native-maps'
 import { useQuery } from '@tanstack/react-query'
@@ -116,6 +116,78 @@ export default function RouteMapScreen() {
     }).start(() => setSelectedPoint(null))
   }, [translateY])
 
+  // Navigate map camera to a point
+  const animateToPoint = useCallback((point: RoutePoint) => {
+    mapRef.current?.animateToRegion({
+      latitude: point.lat,
+      longitude: point.lng,
+      latitudeDelta: 0.05,
+      longitudeDelta: 0.05,
+    }, 400)
+  }, [])
+
+  // Go to adjacent stop by index offset
+  const navigateStop = useCallback((offset: number) => {
+    if (!selectedPoint || points.length === 0) return
+    const currentIdx = points.findIndex((p) => p.id === selectedPoint.id)
+    if (currentIdx === -1) return
+    const nextIdx = currentIdx + offset
+    if (nextIdx < 0 || nextIdx >= points.length) return
+    const nextPoint = points[nextIdx]
+    openPanel(nextPoint)
+    animateToPoint(nextPoint)
+  }, [selectedPoint, points, openPanel, animateToPoint])
+
+  // PanResponder for the panel: horizontal swipe → next/prev stop, vertical swipe down → close
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_e, gs) =>
+        (Math.abs(gs.dx) > 10 || Math.abs(gs.dy) > 10) &&
+        (Math.abs(gs.dx) > Math.abs(gs.dy) * 0.5 || gs.dy > 0),
+      onPanResponderRelease: (_e, gs) => {
+        const isHorizontal = Math.abs(gs.dx) > Math.abs(gs.dy)
+        if (isHorizontal && Math.abs(gs.dx) > 50 && Math.abs(gs.dy) < 80) {
+          // Horizontal swipe: left = next, right = prev
+          if (gs.dx < 0) {
+            navigateStop(1)
+          } else {
+            navigateStop(-1)
+          }
+        } else if (!isHorizontal && gs.dy > 60) {
+          // Swipe down → close
+          closePanel()
+        }
+      },
+    })
+  ).current
+
+  // Separate PanResponder specifically for the drag handle (swipe-down only)
+  const handlePan = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_e, gs) =>
+        Math.abs(gs.dy) > 8 && gs.dy > 0,
+      onPanResponderMove: (_e, gs) => {
+        if (gs.dy > 0) {
+          translateY.setValue(gs.dy)
+        }
+      },
+      onPanResponderRelease: (_e, gs) => {
+        if (gs.dy > 60) {
+          closePanel()
+        } else {
+          Animated.spring(translateY, {
+            toValue: 0,
+            useNativeDriver: true,
+            friction: 10,
+            tension: 80,
+          }).start()
+        }
+      },
+    })
+  ).current
+
   return (
     <View style={styles.container}>
       {/* Map */}
@@ -157,6 +229,7 @@ export default function RouteMapScreen() {
               onPress={(e) => {
                 e.stopPropagation()
                 openPanel(point)
+                animateToPoint(point)
               }}
               tracksViewChanges={isSelected}
               anchor={{ x: 0.5, y: 0.5 }}
@@ -190,6 +263,7 @@ export default function RouteMapScreen() {
       <TouchableOpacity
         style={[styles.backBtn, { top: insets.top + 12 }]}
         onPress={() => router.back()}
+        activeOpacity={0.7}
       >
         <Ionicons name="arrow-back" size={20} color={Colors.text} />
       </TouchableOpacity>
@@ -213,7 +287,7 @@ export default function RouteMapScreen() {
       <Animated.View
         style={[
           styles.panel,
-          { paddingBottom: Math.max(20, insets.bottom), transform: [{ translateY }] },
+          { paddingBottom: Math.max(20, insets.bottom + 8), transform: [{ translateY }] },
         ]}
         pointerEvents={selectedPoint ? 'auto' : 'none'}
       >
@@ -223,6 +297,8 @@ export default function RouteMapScreen() {
             index={points.indexOf(selectedPoint)}
             total={points.length}
             onClose={closePanel}
+            panResponder={panResponder}
+            handlePan={handlePan}
           />
         )}
       </Animated.View>
@@ -256,6 +332,7 @@ function MapLegend({ bottomInset }: { bottomInset: number }) {
       <TouchableOpacity
         style={styles.legendToggle}
         onPress={() => setExpanded((v) => !v)}
+        activeOpacity={0.7}
       >
         <Ionicons
           name={expanded ? 'close' : 'information-circle-outline'}
@@ -274,15 +351,17 @@ interface StopCardProps {
   index: number
   total: number
   onClose: () => void
+  panResponder: ReturnType<typeof PanResponder.create>
+  handlePan: ReturnType<typeof PanResponder.create>
 }
 
-function StopCard({ point, index, total, onClose }: StopCardProps) {
+function StopCard({ point, index, total, onClose, panResponder, handlePan }: StopCardProps) {
   const cfg = PIN_CONFIG[point.type] ?? PIN_CONFIG.WAYPOINT
 
   return (
-    <View>
-      {/* Handle */}
-      <View style={styles.handleWrap}>
+    <View {...panResponder.panHandlers}>
+      {/* Drag handle — has its own swipe-down pan */}
+      <View {...handlePan.panHandlers} style={styles.handleWrap}>
         <View style={styles.handleBar} />
       </View>
 
@@ -306,7 +385,7 @@ function StopCard({ point, index, total, onClose }: StopCardProps) {
           </View>
         </View>
 
-        <TouchableOpacity style={styles.closeBtn} onPress={onClose} hitSlop={10}>
+        <TouchableOpacity style={styles.closeBtn} onPress={onClose} hitSlop={10} activeOpacity={0.7}>
           <Ionicons name="close" size={18} color={Colors.textMuted} />
         </TouchableOpacity>
       </View>
@@ -325,6 +404,14 @@ function StopCard({ point, index, total, onClose }: StopCardProps) {
           {point.stayDurationHours != null && (
             <StatPill icon="anchor-outline" value={`${point.stayDurationHours}h stay`} />
           )}
+        </View>
+      )}
+
+      {/* Swipe hint */}
+      {total > 1 && (
+        <View style={styles.swipeHint}>
+          <Ionicons name="swap-horizontal-outline" size={13} color={Colors.textMuted} />
+          <Text style={styles.swipeHintText}>Swipe left/right to navigate stops</Text>
         </View>
       )}
 
@@ -508,7 +595,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 8,
     paddingHorizontal: 16,
-    marginBottom: 10,
+    marginBottom: 6,
     flexWrap: 'wrap',
   },
   statPill: {
@@ -521,6 +608,15 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
   },
   statPillText: { fontSize: 12, color: Colors.secondary, fontWeight: '500' },
+
+  swipeHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+  },
+  swipeHintText: { fontSize: 11, color: Colors.textMuted, fontStyle: 'italic' },
 
   cardScroll: { maxHeight: 140, paddingHorizontal: 16 },
   description: { fontSize: 14, color: Colors.textSecondary, lineHeight: 20, marginBottom: 8 },

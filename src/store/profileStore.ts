@@ -53,6 +53,7 @@ interface ProfileState {
   updatePreferences: (prefs: Partial<UserPreferences>) => void
   saveRoute: (routeId: string) => void
   unsaveRoute: (routeId: string) => void
+  toggleSaveRoute: (routeId: string) => void
   savePlace: (placeId: string) => void
   unsavePlace: (placeId: string) => void
   loadProfile: () => Promise<void>
@@ -236,6 +237,15 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
       userStats: { ...state.userStats, routesSaved: Math.max(0, state.userStats.routesSaved - 1) }
     }))
     get().saveProfile()
+  },
+
+  toggleSaveRoute: (routeId) => {
+    const { savedRoutes, saveRoute, unsaveRoute } = get()
+    if (savedRoutes.includes(routeId)) {
+      unsaveRoute(routeId)
+    } else {
+      saveRoute(routeId)
+    }
   },
 
   savePlace: (placeId) => {
