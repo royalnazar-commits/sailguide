@@ -26,8 +26,10 @@ interface PlaceCoord { lat: number; lng: number; region?: string; country?: stri
 function computeTotalNm(stops: UserRouteStop[], getCoords: (placeId: string) => PlaceCoord | null): number {
   let total = 0
   for (let i = 0; i < stops.length - 1; i++) {
-    const a = getCoords(stops[i].placeId)
-    const b = getCoords(stops[i + 1].placeId)
+    const sA = stops[i], sB = stops[i + 1]
+    // Use inline lat/lng for custom waypoints, fall back to place lookup
+    const a = (sA.lat != null && sA.lng != null) ? { lat: sA.lat, lng: sA.lng } : getCoords(sA.placeId)
+    const b = (sB.lat != null && sB.lng != null) ? { lat: sB.lat, lng: sB.lng } : getCoords(sB.placeId)
     if (a && b) total += haversineNm(a.lat, a.lng, b.lat, b.lng)
   }
   return Math.round(total * 10) / 10
@@ -164,6 +166,8 @@ interface RouteBuilderState {
 
   // Stop management (getCoords injected so store stays decoupled from placesStore)
   addStop: (placeId: string, getCoords: (id: string) => PlaceCoord | null) => void
+  /** Add a raw coordinate waypoint from a map tap (no Place backing) */
+  addWaypoint: (lat: number, lng: number) => void
   removeStop: (stopId: string, getCoords: (id: string) => PlaceCoord | null) => void
   moveStop: (fromIndex: number, toIndex: number, getCoords: (id: string) => PlaceCoord | null) => void
   updateStopNotes: (stopId: string, notes: string) => void
@@ -244,6 +248,32 @@ export const useRouteBuilderStore = create<RouteBuilderState>((set, get) => ({
           estimatedDays: computeEstimatedDays(stops),
           region: s.draftRoute.region ?? firstCoords?.region,
           country: s.draftRoute.country ?? firstCoords?.country,
+          updatedAt: new Date().toISOString(),
+        },
+      }
+    })
+  },
+
+  addWaypoint: (lat, lng) => {
+    set((s) => {
+      if (!s.draftRoute) return {}
+      const seq = s.draftRoute.stops.length + 1
+      const newStop: UserRouteStop = {
+        id: `stop-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+        placeId: `custom-${Date.now()}`,
+        lat,
+        lng,
+        name: `Stop ${seq}`,
+        sequence: seq,
+        estimatedStayDays: 1,
+      }
+      const stops = [...s.draftRoute.stops, newStop]
+      return {
+        draftRoute: {
+          ...s.draftRoute,
+          stops,
+          totalNm: computeTotalNm(stops, () => null),
+          estimatedDays: computeEstimatedDays(stops),
           updatedAt: new Date().toISOString(),
         },
       }

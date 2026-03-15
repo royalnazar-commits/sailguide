@@ -9,13 +9,18 @@ export type UserRouteStatus = 'DRAFT' | 'PUBLISHED'
 
 export interface UserRouteStop {
   id: string
-  /** References a Place id (seed or user-created) */
+  /** References a Place id (seed or user-created). 'custom-*' for map-tap waypoints. */
   placeId: string
   /** 1-indexed, re-computed whenever stops are reordered */
   sequence: number
   /** Private skipper note for this specific stop */
   notes?: string
   estimatedStayDays?: number
+  /** Inline coordinates for custom map-tap waypoints (placeId starts with 'custom-') */
+  lat?: number
+  lng?: number
+  /** Display name for custom waypoints */
+  name?: string
 }
 
 export interface UserRoute {
