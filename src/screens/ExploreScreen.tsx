@@ -6,6 +6,7 @@ import {
   Alert,
 } from 'react-native'
 import MapView, { Marker, Region } from 'react-native-maps'
+import Supercluster from 'supercluster'
 import * as ImagePicker from 'expo-image-picker'
 import * as Location from 'expo-location'
 import { router } from 'expo-router'
@@ -113,6 +114,33 @@ export default function ExploreScreen() {
       : allPlaces.filter((p) => normalizePlaceType(p.type) === activeFilter),
     [allPlaces, activeFilter],
   )
+
+  // ── Clustering ────────────────────────────────────────────────────────────
+  const [region, setRegion] = useState<Region>(INITIAL_REGION)
+
+  const clusterIndex = useMemo(() => {
+    const index = new Supercluster<{ placeId: string }>({ radius: 50, maxZoom: 14 })
+    index.load(
+      visiblePlaces.map((p) => ({
+        type: 'Feature' as const,
+        geometry: { type: 'Point' as const, coordinates: [p.lng, p.lat] },
+        properties: { placeId: p.id },
+      }))
+    )
+    return index
+  }, [visiblePlaces])
+
+  const clusters = useMemo(() => {
+    const { latitude, longitude, latitudeDelta, longitudeDelta } = region
+    const zoom = Math.min(20, Math.max(0, Math.round(Math.log2(360 / latitudeDelta))))
+    const bbox: [number, number, number, number] = [
+      longitude - longitudeDelta / 2,
+      latitude  - latitudeDelta  / 2,
+      longitude + longitudeDelta / 2,
+      latitude  + latitudeDelta  / 2,
+    ]
+    return clusterIndex.getClusters(bbox, zoom)
+  }, [clusterIndex, region])
 
   // ── Actions ───────────────────────────────────────────────────────────────
 
@@ -283,7 +311,7 @@ export default function ExploreScreen() {
         ref={mapRef}
         style={StyleSheet.absoluteFillObject}
         initialRegion={INITIAL_REGION}
-        onRegionChangeComplete={(region) => { currentRegionRef.current = region }}
+        onRegionChangeComplete={(r) => { currentRegionRef.current = r; setRegion(r) }}
         onPress={handleMapPress}
         onLongPress={handleLongPress}
         showsUserLocation
@@ -291,31 +319,73 @@ export default function ExploreScreen() {
         showsScale={false}
         mapType="standard"
       >
-        {visiblePlaces.map((place) => {
-          const isBeingRepositioned = repositioningPlace?.id === place.id
-          const currentLat = isBeingRepositioned ? (repositionCoord?.lat ?? place.lat) : place.lat
-          const currentLng = isBeingRepositioned ? (repositionCoord?.lng ?? place.lng) : place.lng
+        {/* During reposition mode skip clustering — show all individual markers */}
+        {repositioningPlace
+          ? visiblePlaces.map((place) => {
+              const isBeingRepositioned = repositioningPlace.id === place.id
+              const lat = isBeingRepositioned ? (repositionCoord?.lat ?? place.lat) : place.lat
+              const lng = isBeingRepositioned ? (repositionCoord?.lng ?? place.lng) : place.lng
+              return (
+                <Marker
+                  key={place.id}
+                  coordinate={{ latitude: lat, longitude: lng }}
+                  onPress={() => handleMarkerPress(place)}
+                  draggable={isBeingRepositioned}
+                  onDragEnd={isBeingRepositioned
+                    ? (e) => setRepositionCoord({
+                        lat: e.nativeEvent.coordinate.latitude,
+                        lng: e.nativeEvent.coordinate.longitude,
+                      })
+                    : undefined}
+                  tracksViewChanges={isBeingRepositioned}
+                  anchor={{ x: 0.5, y: 0.5 }}
+                >
+                  <PlaceMarker type={place.type} selected={isBeingRepositioned} isPremium={place.isPremium} />
+                </Marker>
+              )
+            })
+          : clusters.map((cluster) => {
+              const [lng, lat] = cluster.geometry.coordinates
+              const props = cluster.properties as any
 
-          return (
-            <Marker
-              key={place.id}
-              coordinate={{ latitude: currentLat, longitude: currentLng }}
-              onPress={() => handleMarkerPress(place)}
-              draggable={isBeingRepositioned}
-              onDragEnd={isBeingRepositioned
-                ? (e) => setRepositionCoord({
-                    lat: e.nativeEvent.coordinate.latitude,
-                    lng: e.nativeEvent.coordinate.longitude,
-                  })
-                : undefined
+              if (props.cluster) {
+                // ── Cluster bubble ──────────────────────────────────────
+                return (
+                  <Marker
+                    key={`cluster-${cluster.id}`}
+                    coordinate={{ latitude: lat, longitude: lng }}
+                    anchor={{ x: 0.5, y: 0.5 }}
+                    tracksViewChanges={false}
+                    onPress={() => {
+                      const expansion = clusterIndex.getClusterExpansionZoom(cluster.id as number)
+                      const newDelta = 360 / Math.pow(2, expansion)
+                      mapRef.current?.animateToRegion(
+                        { latitude: lat, longitude: lng, latitudeDelta: newDelta, longitudeDelta: newDelta },
+                        350,
+                      )
+                    }}
+                  >
+                    <ClusterBubble count={props.point_count} />
+                  </Marker>
+                )
               }
-              tracksViewChanges={isBeingRepositioned}
-              anchor={{ x: 0.5, y: 1 }}
-            >
-              <PlaceMarker type={place.type} selected={selectedPlace?.id === place.id || isBeingRepositioned} isPremium={place.isPremium} />
-            </Marker>
-          )
-        })}
+
+              // ── Individual place marker ──────────────────────────────
+              const place = visiblePlaces.find((p) => p.id === props.placeId)
+              if (!place) return null
+              return (
+                <Marker
+                  key={place.id}
+                  coordinate={{ latitude: lat, longitude: lng }}
+                  onPress={() => handleMarkerPress(place)}
+                  tracksViewChanges={selectedPlace?.id === place.id}
+                  anchor={{ x: 0.5, y: 0.5 }}
+                >
+                  <PlaceMarker type={place.type} selected={selectedPlace?.id === place.id} isPremium={place.isPremium} />
+                </Marker>
+              )
+            })
+        }
       </MapView>
 
       {/* ── Search bar (hidden while repositioning) ──────────────────────── */}
@@ -637,6 +707,37 @@ export default function ExploreScreen() {
     </View>
   )
 }
+
+// ── Cluster bubble component ──────────────────────────────────────────────────
+
+function ClusterBubble({ count }: { count: number }) {
+  const size = count < 10 ? 32 : count < 100 ? 38 : 44
+  return (
+    <View style={[clusterStyles.bubble, { width: size, height: size, borderRadius: size / 2 }]}>
+      <Text style={clusterStyles.count}>{count}</Text>
+    </View>
+  )
+}
+
+const clusterStyles = StyleSheet.create({
+  bubble: {
+    backgroundColor: Colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#fff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  count: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+})
 
 // ── Styles ───────────────────────────────────────────────────────────────────
 

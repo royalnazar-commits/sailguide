@@ -12,13 +12,25 @@
  */
 
 import React from 'react'
-import { View, StyleSheet } from 'react-native'
+import { View, Text, StyleSheet } from 'react-native'
 import {
   CanonicalPlaceType,
   CANONICAL_PLACE_TYPES,
   getPlaceTypeMeta,
   normalizePlaceType,
 } from '../constants/placeTypes'
+
+// ── Emoji per place type (each type must be visually distinct) ────────────────
+const PLACE_EMOJI: Record<CanonicalPlaceType, string> = {
+  MARINA:     '⚓',
+  ANCHORAGE:  '⚓',
+  BAY:        '🌊',
+  POI:        '📍',
+  BEACH:      '🏖',
+  CAVE:       '🦇',
+  LAGOON:     '🏝',
+  SNORKELING: '🤿',
+}
 
 // ── Type config ───────────────────────────────────────────────────────────────
 // Derived from the central registry — single source of truth for colors.
@@ -366,10 +378,10 @@ interface Props {
 }
 
 export function PlaceMarker({ type, selected = false, isPremium = false }: Props) {
-  const canonical = normalizePlaceType(type)
+  const canonical  = normalizePlaceType(type)
   const { color }  = PLACE_CONFIG[canonical]
-  const bubbleSize = selected ? 44 : 36
-  const iconSize   = selected ? 22 : 17
+  const size       = selected ? 34 : 28
+  const iconSize   = selected ? 16 : 13
 
   return (
     <View style={styles.wrapper}>
@@ -377,22 +389,18 @@ export function PlaceMarker({ type, selected = false, isPremium = false }: Props
         style={[
           styles.bubble,
           {
-            backgroundColor:  color,
-            width:            bubbleSize,
-            height:           bubbleSize,
-            borderRadius:     bubbleSize / 2,
-            borderWidth:      selected ? 3 : 2,
-            borderColor:      selected ? '#fff' : 'rgba(255,255,255,0.65)',
-            shadowOpacity:    selected ? 0.38 : 0.20,
-            shadowRadius:     selected ? 9 : 5,
+            backgroundColor: color,
+            width:            size,
+            height:           size,
+            borderRadius:     size / 2,
+            shadowOpacity:    selected ? 0.4 : 0.18,
+            shadowRadius:     selected ? 6 : 3,
+            transform:        [{ scale: selected ? 1.1 : 1 }],
           },
         ]}
       >
         <PlaceIcon type={canonical} size={iconSize} />
       </View>
-      {/* Downward pin tip */}
-      <View style={[styles.tip, { borderTopColor: color }]} />
-      {/* Premium lock badge — drawn with pure Views, no fonts */}
       {isPremium && <LockBadge />}
     </View>
   )
@@ -456,15 +464,5 @@ const styles = StyleSheet.create({
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     elevation: 4,
-  },
-  tip: {
-    width: 0,
-    height: 0,
-    borderLeftWidth:  6,
-    borderRightWidth: 6,
-    borderTopWidth:   8,
-    borderLeftColor:  'transparent',
-    borderRightColor: 'transparent',
-    marginTop: -1,
   },
 })
