@@ -24,6 +24,7 @@ import { seedPlaces } from '../data/seedPlaces'
 import { Place } from '../types/place'
 import { Colors } from '../constants/colors'
 import { PurchaseModal } from '../components/PurchaseModal'
+import { SuggestedYachts } from '../components/SuggestedYachts'
 
 const STOP_COLORS = ['#1B6CA8', '#22C55E', '#F59E0B', '#EF4444', '#8B5CF6', '#00B4D8', '#F97316']
 
@@ -324,12 +325,10 @@ export default function UserRouteDetailScreen() {
         {/* Publish / Unpublish banner (owned routes only) */}
         {isOwned && route.status === 'DRAFT' && (
           <TouchableOpacity style={styles.publishBanner} onPress={handlePublish} activeOpacity={0.85}>
-            <View style={styles.publishBannerLeft}>
-              <Ionicons name="earth-outline" size={18} color={Colors.textSecondary} />
-              <View>
-                <Text style={styles.publishBannerTitle}>Share with community</Text>
-                <Text style={styles.publishBannerSub}>Optional — publish so other sailors can discover this route</Text>
-              </View>
+            <Ionicons name="earth-outline" size={20} color="#fff" />
+            <View style={styles.publishBannerBody}>
+              <Text style={styles.publishBannerTitle}>Publish this route</Text>
+              <Text style={styles.publishBannerSub}>Share with the community so other sailors can discover it</Text>
             </View>
             <View style={styles.publishBannerBtn}>
               <Text style={styles.publishBannerBtnText}>Publish</Text>
@@ -448,6 +447,9 @@ export default function UserRouteDetailScreen() {
           </View>
         </View>
 
+        {/* Suggested yachts */}
+        <SuggestedYachts country={route.country} />
+
         {/* Meta */}
         <View style={styles.section}>
           <Text style={styles.metaDate}>Created {createdDate}</Text>
@@ -470,6 +472,8 @@ export default function UserRouteDetailScreen() {
     </View>
   )
 }
+
+// ── StatPill ──────────────────────────────────────────────────────────────────
 
 function StatPill({ icon, value }: { icon: string; value: string }) {
   return (
@@ -606,24 +610,27 @@ const styles = StyleSheet.create({
   },
   statusPillText: { fontSize: 13, fontWeight: '600' },
 
-  // Publish banner (draft state)
+  // Publish banner (draft state) — primary CTA
   publishBanner: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    marginHorizontal: 16, marginBottom: 8,
-    backgroundColor: Colors.background,
-    borderRadius: 14, padding: 12,
-    borderWidth: 1, borderColor: Colors.border,
+    flexDirection: 'row', alignItems: 'center',
+    marginHorizontal: 16, marginBottom: 12,
+    backgroundColor: Colors.secondary,
+    borderRadius: 16, paddingVertical: 14, paddingHorizontal: 16,
     gap: 12,
+    shadowColor: Colors.secondary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.30,
+    shadowRadius: 10,
+    elevation: 5,
   },
-  publishBannerLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
-  publishBannerTitle: { fontSize: 13, fontWeight: '600', color: Colors.textSecondary },
-  publishBannerSub: { fontSize: 11, color: Colors.textMuted, marginTop: 1 },
+  publishBannerBody: { flex: 1 },
+  publishBannerTitle: { fontSize: 15, fontWeight: '700', color: '#fff' },
+  publishBannerSub: { fontSize: 12, color: 'rgba(255,255,255,0.78)', marginTop: 2 },
   publishBannerBtn: {
-    backgroundColor: Colors.background, borderRadius: 10,
-    paddingHorizontal: 12, paddingVertical: 6,
-    borderWidth: 1, borderColor: Colors.border,
+    backgroundColor: '#fff', borderRadius: 10,
+    paddingHorizontal: 14, paddingVertical: 8,
   },
-  publishBannerBtnText: { fontSize: 13, fontWeight: '600', color: Colors.textSecondary },
+  publishBannerBtnText: { fontSize: 14, fontWeight: '700', color: Colors.secondary },
 
   // Published banner (published state)
   publishedBanner: {

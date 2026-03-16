@@ -167,7 +167,7 @@ interface RouteBuilderState {
   // Stop management (getCoords injected so store stays decoupled from placesStore)
   addStop: (placeId: string, getCoords: (id: string) => PlaceCoord | null) => void
   /** Add a raw coordinate waypoint from a map tap (no Place backing) */
-  addWaypoint: (lat: number, lng: number) => void
+  addWaypoint: (lat: number, lng: number, name?: string, type?: string) => void
   removeStop: (stopId: string, getCoords: (id: string) => PlaceCoord | null) => void
   moveStop: (fromIndex: number, toIndex: number, getCoords: (id: string) => PlaceCoord | null) => void
   updateStopNotes: (stopId: string, notes: string) => void
@@ -258,7 +258,7 @@ export const useRouteBuilderStore = create<RouteBuilderState>((set, get) => ({
     })
   },
 
-  addWaypoint: (lat, lng) => {
+  addWaypoint: (lat, lng, name?, type?) => {
     set((s) => {
       if (!s.draftRoute) return {}
       const seq = s.draftRoute.stops.length + 1
@@ -267,7 +267,8 @@ export const useRouteBuilderStore = create<RouteBuilderState>((set, get) => ({
         placeId: `custom-${Date.now()}`,
         lat,
         lng,
-        name: `Stop ${seq}`,
+        name: name ?? `Stop ${seq}`,
+        type,
         sequence: seq,
         estimatedStayDays: 1,
       }

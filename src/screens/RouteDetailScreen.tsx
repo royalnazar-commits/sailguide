@@ -11,6 +11,7 @@ import { Colors } from '../constants/colors'
 import { SafetyBanner } from '../components/SafetyBanner'
 import { CaptainBadge } from '../components/CaptainBadge'
 import { RouteItinerary } from '../components/RouteItinerary'
+import { SuggestedYachts } from '../components/SuggestedYachts'
 import { useProfileStore } from '../store/profileStore'
 
 const difficultyColors = { EASY: Colors.success, MODERATE: Colors.warning, ADVANCED: Colors.danger }
@@ -104,6 +105,8 @@ export default function RouteDetailScreen() {
             </View>
           </ScrollView>
         )}
+
+        <SuggestedYachts country={route.country} />
 
         <SafetyBanner />
 

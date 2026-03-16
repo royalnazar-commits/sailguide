@@ -2,6 +2,18 @@ export type UserRole = 'BUYER' | 'CAPTAIN' | 'ADMIN'
 export type Difficulty = 'EASY' | 'MODERATE' | 'ADVANCED'
 export type PointType = 'MARINA' | 'ANCHORAGE' | 'WAYPOINT' | 'POI' | 'DANGER' | 'FUEL'
 export type PurchaseStatus = 'PENDING' | 'COMPLETED' | 'FAILED' | 'REFUNDED'
+export type StopType = 'SWIM' | 'LUNCH' | 'SNORKEL' | 'SCENIC' | 'VILLAGE' | 'ANCHORAGE' | 'CAVE' | 'VIEWPOINT' | 'BEACH' | 'ISLAND_WALK' | 'SUNSET'
+
+export interface IntermediateStop {
+  id: string
+  name: string
+  type: StopType
+  description: string
+  lat: number
+  lng: number
+  durationMins?: number
+  isRecommended?: boolean
+}
 
 export interface User {
   id: string
@@ -77,6 +89,7 @@ export interface RoutePoint {
   proximityMessage?: string
   marinaId?: string
   marina?: Marina
+  intermediateStops?: IntermediateStop[]
 }
 
 export interface Route {

@@ -9,10 +9,25 @@ import { router, useLocalSearchParams } from 'expo-router'
 import { Ionicons } from '@expo/vector-icons'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { routesApi } from '../services/api'
-import { RoutePoint } from '../types'
+import { RoutePoint, IntermediateStop } from '../types'
 import { Colors } from '../constants/colors'
+import { getSeaWaypoints } from '../data/seaWaypoints'
 
 // ─── Config ─────────────────────────────────────────────────────────────────
+
+const STOP_MARKER_CONFIG: Record<string, { color: string; emoji: string; label: string }> = {
+  SWIM:        { color: '#0EA5E9', emoji: '🏊', label: 'Swim Stop' },
+  SNORKEL:     { color: '#06B6D4', emoji: '🤿', label: 'Snorkel Spot' },
+  LUNCH:       { color: '#F59E0B', emoji: '🍽', label: 'Lunch Stop' },
+  SCENIC:      { color: '#8B5CF6', emoji: '📷', label: 'Scenic Spot' },
+  VILLAGE:     { color: '#10B981', emoji: '🏘', label: 'Village' },
+  ANCHORAGE:   { color: '#22C55E', emoji: '⚓', label: 'Anchorage' },
+  CAVE:        { color: '#6366F1', emoji: '🦇', label: 'Cave' },
+  VIEWPOINT:   { color: '#EC4899', emoji: '👁', label: 'Viewpoint' },
+  BEACH:       { color: '#F97316', emoji: '🏖', label: 'Beach' },
+  ISLAND_WALK: { color: '#84CC16', emoji: '🥾', label: 'Island Walk' },
+  SUNSET:      { color: '#F59E0B', emoji: '🌅', label: 'Sunset Spot' },
+}
 
 const PIN_CONFIG: Record<string, { color: string; icon: string; label: string }> = {
   MARINA:    { color: Colors.marinaPin,    icon: 'boat',                    label: 'Marina' },
@@ -25,6 +40,18 @@ const PIN_CONFIG: Record<string, { color: string; icon: string; label: string }>
 
 const PANEL_HEIGHT = 340
 
+// Returns true if the stop's coords are within a reasonable bounding box of its leg
+function isStopInLegBounds(stop: IntermediateStop, from: RoutePoint | undefined, to: RoutePoint): boolean {
+  if (!from) return true
+  const MARGIN = 1.5 // ~165 km — generous enough for detours, filters truly wrong coordinates
+  return (
+    stop.lat >= Math.min(from.lat, to.lat) - MARGIN &&
+    stop.lat <= Math.max(from.lat, to.lat) + MARGIN &&
+    stop.lng >= Math.min(from.lng, to.lng) - MARGIN &&
+    stop.lng <= Math.max(from.lng, to.lng) + MARGIN
+  )
+}
+
 // ─── Main screen ─────────────────────────────────────────────────────────────
 
 export default function RouteMapScreen() {
@@ -35,6 +62,7 @@ export default function RouteMapScreen() {
   const focusApplied = useRef(false)
 
   const [selectedPoint, setSelectedPoint] = useState<RoutePoint | null>(null)
+  const [selectedStop, setSelectedStop] = useState<IntermediateStop | null>(null)
   const [mapReady, setMapReady] = useState(false)
 
   const { data: route } = useQuery({
@@ -52,10 +80,22 @@ export default function RouteMapScreen() {
     [rawPoints],
   )
 
-  const coordinates = useMemo(
-    () => points.map((p) => ({ latitude: p.lat, longitude: p.lng })),
-    [points],
-  )
+  const coordinates = useMemo(() => {
+    const coords: { latitude: number; longitude: number }[] = []
+    for (let i = 0; i < points.length; i++) {
+      const p = points[i]
+      // Before adding this point, splice in any sea waypoints for the leg from
+      // the previous point to this one so the polyline avoids crossing land.
+      if (i > 0) {
+        const seaWpts = getSeaWaypoints(id, points[i - 1].sequence, p.sequence)
+        if (seaWpts) {
+          seaWpts.forEach((w) => coords.push({ latitude: w.lat, longitude: w.lng }))
+        }
+      }
+      coords.push({ latitude: p.lat, longitude: p.lng })
+    }
+    return coords
+  }, [points, id])
 
   // Fit map once both map is ready and points are loaded
   useEffect(() => {
@@ -77,7 +117,22 @@ export default function RouteMapScreen() {
 
   const openPanel = useCallback(
     (point: RoutePoint) => {
+      setSelectedStop(null)
       setSelectedPoint(point)
+      Animated.spring(translateY, {
+        toValue: 0,
+        useNativeDriver: true,
+        friction: 9,
+        tension: 80,
+      }).start()
+    },
+    [translateY],
+  )
+
+  const openPoiPanel = useCallback(
+    (stop: IntermediateStop) => {
+      setSelectedPoint(null)
+      setSelectedStop(stop)
       Animated.spring(translateY, {
         toValue: 0,
         useNativeDriver: true,
@@ -113,7 +168,10 @@ export default function RouteMapScreen() {
       toValue: PANEL_HEIGHT,
       duration: 220,
       useNativeDriver: true,
-    }).start(() => setSelectedPoint(null))
+    }).start(() => {
+      setSelectedPoint(null)
+      setSelectedStop(null)
+    })
   }, [translateY])
 
   // Navigate map camera to a point
@@ -199,7 +257,7 @@ export default function RouteMapScreen() {
         style={StyleSheet.absoluteFill}
         provider={PROVIDER_DEFAULT}
         onMapReady={() => setMapReady(true)}
-        onPress={() => selectedPoint && closePanel()}
+        onPress={() => (selectedPoint || selectedStop) && closePanel()}
         showsUserLocation
         showsCompass={false}
         showsScale={false}
@@ -253,6 +311,42 @@ export default function RouteMapScreen() {
             </Marker>
           )
         })}
+
+        {/* Intermediate stop markers */}
+        {points.flatMap((point, idx) => {
+          const fromPoint = idx > 0 ? points[idx - 1] : undefined
+          return (point.intermediateStops ?? [])
+            .filter((stop) => isStopInLegBounds(stop, fromPoint, point))
+            .map((stop) => {
+              const cfg = STOP_MARKER_CONFIG[stop.type] ?? { color: Colors.secondary, emoji: '📍', label: stop.type }
+              const isSelected = selectedStop?.id === stop.id
+              return (
+                <Marker
+                  key={stop.id}
+                  coordinate={{ latitude: stop.lat, longitude: stop.lng }}
+                  anchor={{ x: 0.5, y: 0.5 }}
+                  tracksViewChanges={isSelected}
+                  onPress={(e) => {
+                    e.stopPropagation()
+                    openPoiPanel(stop)
+                    mapRef.current?.animateToRegion({
+                      latitude: stop.lat,
+                      longitude: stop.lng,
+                      latitudeDelta: 0.05,
+                      longitudeDelta: 0.05,
+                    }, 400)
+                  }}
+                >
+                  <View style={[
+                    styles.stopMarkerOuter,
+                    { backgroundColor: cfg.color, transform: [{ scale: isSelected ? 1.2 : 1 }] },
+                  ]}>
+                    <Text style={styles.stopMarkerEmoji}>{cfg.emoji}</Text>
+                  </View>
+                </Marker>
+              )
+            })
+        })}
       </MapView>
 
       {/* Loading overlay */}
@@ -292,7 +386,7 @@ export default function RouteMapScreen() {
           styles.panel,
           { paddingBottom: Math.max(20, insets.bottom + 8), transform: [{ translateY }] },
         ]}
-        pointerEvents={selectedPoint ? 'auto' : 'none'}
+        pointerEvents={(selectedPoint || selectedStop) ? 'auto' : 'none'}
       >
         {selectedPoint && (
           <StopCard
@@ -301,6 +395,13 @@ export default function RouteMapScreen() {
             total={points.length}
             onClose={closePanel}
             panResponder={panResponder}
+            handlePan={handlePan}
+          />
+        )}
+        {selectedStop && (
+          <PoiCard
+            stop={selectedStop}
+            onClose={closePanel}
             handlePan={handlePan}
           />
         )}
@@ -313,20 +414,36 @@ export default function RouteMapScreen() {
 
 function MapLegend({ bottomInset }: { bottomInset: number }) {
   const [expanded, setExpanded] = useState(false)
-  const legendItems = [
+  const routeItems = [
     { type: 'MARINA',    cfg: PIN_CONFIG.MARINA },
     { type: 'ANCHORAGE', cfg: PIN_CONFIG.ANCHORAGE },
     { type: 'FUEL',      cfg: PIN_CONFIG.FUEL },
     { type: 'DANGER',    cfg: PIN_CONFIG.DANGER },
+  ]
+  const stopItems = [
+    { key: 'SWIM',      cfg: STOP_MARKER_CONFIG.SWIM },
+    { key: 'SNORKEL',   cfg: STOP_MARKER_CONFIG.SNORKEL },
+    { key: 'BEACH',     cfg: STOP_MARKER_CONFIG.BEACH },
+    { key: 'SCENIC',    cfg: STOP_MARKER_CONFIG.SCENIC },
+    { key: 'LUNCH',     cfg: STOP_MARKER_CONFIG.LUNCH },
+    { key: 'VILLAGE',   cfg: STOP_MARKER_CONFIG.VILLAGE },
   ]
 
   return (
     <View style={[styles.legend, { bottom: Math.max(20, bottomInset) + PANEL_HEIGHT + 12 }]}>
       {expanded && (
         <View style={styles.legendItems}>
-          {legendItems.map(({ type, cfg }) => (
+          <Text style={styles.legendGroupTitle}>Route Stops</Text>
+          {routeItems.map(({ type, cfg }) => (
             <View key={type} style={styles.legendRow}>
               <View style={[styles.legendDot, { backgroundColor: cfg.color }]} />
+              <Text style={styles.legendText}>{cfg.label}</Text>
+            </View>
+          ))}
+          <Text style={[styles.legendGroupTitle, { marginTop: 8 }]}>Points of Interest</Text>
+          {stopItems.map(({ key, cfg }) => (
+            <View key={key} style={styles.legendRow}>
+              <Text style={styles.legendEmoji}>{cfg.emoji}</Text>
               <Text style={styles.legendText}>{cfg.label}</Text>
             </View>
           ))}
@@ -428,6 +545,26 @@ function StopCard({ point, index, total, onClose, panResponder, handlePan }: Sto
           <Text style={styles.description}>{point.description}</Text>
         ) : null}
 
+        {/* Intermediate stops chips */}
+        {(point.intermediateStops?.length ?? 0) > 0 && (
+          <View style={styles.stopsSection}>
+            <Text style={styles.stopsSectionTitle}>Along this leg</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.stopsScroll}>
+              <View style={styles.stopsRow}>
+                {point.intermediateStops!.map((stop) => {
+                  const cfg = STOP_MARKER_CONFIG[stop.type] ?? { color: Colors.secondary, emoji: '📍', label: stop.type }
+                  return (
+                    <View key={stop.id} style={[styles.stopChip, { borderColor: cfg.color }]}>
+                      <Text style={styles.stopChipEmoji}>{cfg.emoji}</Text>
+                      <Text style={[styles.stopChipName, { color: cfg.color }]} numberOfLines={1}>{stop.name}</Text>
+                    </View>
+                  )
+                })}
+              </View>
+            </ScrollView>
+          </View>
+        )}
+
         {point.warnings.length > 0 && (
           <View style={styles.infoRow}>
             <Text style={styles.infoEmoji}>⚠️</Text>
@@ -464,6 +601,61 @@ function StatPill({ icon, value }: { icon: any; value: string }) {
     <View style={styles.statPill}>
       <Ionicons name={icon} size={12} color={Colors.secondary} />
       <Text style={styles.statPillText}>{value}</Text>
+    </View>
+  )
+}
+
+// ─── POI Card ────────────────────────────────────────────────────────────────
+
+interface PoiCardProps {
+  stop: IntermediateStop
+  onClose: () => void
+  handlePan: ReturnType<typeof PanResponder.create>
+}
+
+function PoiCard({ stop, onClose, handlePan }: PoiCardProps) {
+  const cfg = STOP_MARKER_CONFIG[stop.type] ?? { color: Colors.secondary, emoji: '📍', label: stop.type }
+  return (
+    <View>
+      <View {...handlePan.panHandlers} style={styles.handleWrap}>
+        <View style={styles.handleBar} />
+      </View>
+
+      <View style={styles.cardHeader}>
+        <View style={[styles.iconCircle, { backgroundColor: cfg.color + '22' }]}>
+          <Text style={styles.poiEmoji}>{cfg.emoji}</Text>
+        </View>
+        <View style={styles.headerInfo}>
+          <View style={styles.headerTopRow}>
+            <Text style={styles.stopName} numberOfLines={2}>{stop.name}</Text>
+          </View>
+          <View style={[styles.typeBadge, { backgroundColor: cfg.color + '18' }]}>
+            <Text style={[styles.typeLabel, { color: cfg.color }]}>{cfg.label}</Text>
+          </View>
+        </View>
+        <TouchableOpacity style={styles.closeBtn} onPress={onClose} hitSlop={10} activeOpacity={0.7}>
+          <Ionicons name="close" size={18} color={Colors.textMuted} />
+        </TouchableOpacity>
+      </View>
+
+      {stop.durationMins != null && (
+        <View style={styles.statsRow}>
+          <StatPill icon="time-outline" value={
+            stop.durationMins < 60
+              ? `~${stop.durationMins} min`
+              : `~${(stop.durationMins / 60).toFixed(1).replace('.0', '')}h`
+          } />
+          {stop.isRecommended && (
+            <View style={[styles.statPill, { backgroundColor: cfg.color + '18' }]}>
+              <Text style={[styles.statPillText, { color: cfg.color }]}>★ Recommended</Text>
+            </View>
+          )}
+        </View>
+      )}
+
+      <ScrollView style={styles.cardScroll} showsVerticalScrollIndicator={false}>
+        <Text style={styles.description}>{stop.description}</Text>
+      </ScrollView>
     </View>
   )
 }
@@ -533,6 +725,21 @@ const styles = StyleSheet.create({
   },
   markerNum: { color: '#fff', fontSize: 11, fontWeight: '800' },
 
+  // Intermediate stop markers
+  stopMarkerOuter: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.18,
+    shadowRadius: 3,
+    elevation: 3,
+  },
+  stopMarkerEmoji: { fontSize: 14 },
+
   // Legend
   legend: {
     position: 'absolute',
@@ -547,8 +754,10 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   legendItems: { paddingHorizontal: 12, paddingTop: 12 },
+  legendGroupTitle: { fontSize: 10, fontWeight: '700', color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 },
   legendRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
   legendDot: { width: 10, height: 10, borderRadius: 5 },
+  legendEmoji: { fontSize: 13, width: 10, textAlign: 'center' },
   legendText: { fontSize: 12, color: Colors.textSecondary },
   legendToggle: {
     width: 36,
@@ -586,6 +795,7 @@ const styles = StyleSheet.create({
     paddingBottom: 10,
   },
   iconCircle: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
+  poiEmoji: { fontSize: 20 },
   headerInfo: { flex: 1 },
   headerTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 },
   stopName: { fontSize: 17, fontWeight: '700', color: Colors.text, flex: 1, marginRight: 8 },
@@ -621,9 +831,23 @@ const styles = StyleSheet.create({
   },
   swipeHintText: { fontSize: 11, color: Colors.textMuted, fontStyle: 'italic' },
 
-  cardScroll: { maxHeight: 140, paddingHorizontal: 16 },
+  cardScroll: { maxHeight: 160, paddingHorizontal: 16 },
   description: { fontSize: 14, color: Colors.textSecondary, lineHeight: 20, marginBottom: 8 },
   infoRow: { flexDirection: 'row', gap: 6, alignItems: 'flex-start', marginBottom: 6 },
   infoEmoji: { fontSize: 14, lineHeight: 20 },
   infoText: { flex: 1, fontSize: 13, color: Colors.textSecondary, lineHeight: 19 },
+
+  // Intermediate stops in StopCard
+  stopsSection: { marginBottom: 10 },
+  stopsSectionTitle: { fontSize: 11, fontWeight: '700', color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 },
+  stopsScroll: { marginHorizontal: -16 },
+  stopsRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16 },
+  stopChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    borderWidth: 1.5, borderRadius: 20,
+    paddingHorizontal: 10, paddingVertical: 5,
+    backgroundColor: '#fff',
+  },
+  stopChipEmoji: { fontSize: 13 },
+  stopChipName: { fontSize: 12, fontWeight: '600', maxWidth: 100 },
 })

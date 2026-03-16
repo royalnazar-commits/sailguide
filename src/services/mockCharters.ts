@@ -848,6 +848,24 @@ export function getYachts(): Yacht[] {
   return MOCK_YACHTS
 }
 
+/**
+ * Returns up to `limit` yachts suitable for a route in the given country.
+ * Matches on country first; if no yachts are based there, returns the
+ * top-rated yachts overall so the section is never empty.
+ * Replace the body with a real Booking Manager call when the API is ready.
+ */
+export function getSuggestedYachts(country?: string, limit = 4): Yacht[] {
+  if (country) {
+    const countryMatches = MOCK_YACHTS
+      .filter((y) => y.country.toLowerCase() === country.toLowerCase())
+      .sort((a, b) => b.rating - a.rating)
+    if (countryMatches.length > 0) return countryMatches.slice(0, limit)
+  }
+  return [...MOCK_YACHTS]
+    .sort((a, b) => b.rating - a.rating)
+    .slice(0, limit)
+}
+
 export function getYachtById(id: string): Yacht | undefined {
   return MOCK_YACHTS.find((y) => y.id === id)
 }

@@ -7,7 +7,7 @@ import {
 import { router } from 'expo-router'
 import { Ionicons } from '@expo/vector-icons'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { RoutePoint } from '../types'
+import { RoutePoint, IntermediateStop } from '../types'
 import { Colors } from '../constants/colors'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -17,6 +17,20 @@ const CARD_GAP = 12
 const SNAP = CARD_W + CARD_GAP
 const SHEET_MAX = 520
 const SCREEN_W = Dimensions.get('window').width
+
+const STOP_CONFIG: Record<string, { color: string; emoji: string; label: string }> = {
+  SWIM:        { color: '#0EA5E9', emoji: '🏊', label: 'Swim Stop' },
+  SNORKEL:     { color: '#06B6D4', emoji: '🤿', label: 'Snorkel Spot' },
+  LUNCH:       { color: '#F59E0B', emoji: '🍽', label: 'Lunch Stop' },
+  SCENIC:      { color: '#8B5CF6', emoji: '📷', label: 'Scenic Spot' },
+  VILLAGE:     { color: '#10B981', emoji: '🏘', label: 'Village' },
+  ANCHORAGE:   { color: '#22C55E', emoji: '⚓', label: 'Anchorage' },
+  CAVE:        { color: '#6366F1', emoji: '🦇', label: 'Cave' },
+  VIEWPOINT:   { color: '#EC4899', emoji: '👁', label: 'Viewpoint' },
+  BEACH:       { color: '#F97316', emoji: '🏖', label: 'Beach' },
+  ISLAND_WALK: { color: '#84CC16', emoji: '🥾', label: 'Island Walk' },
+  SUNSET:      { color: '#F59E0B', emoji: '🌅', label: 'Sunset Spot' },
+}
 
 const TYPE_COLOR: Record<string, string> = {
   MARINA:    '#1E3A5F',
@@ -263,6 +277,7 @@ export function RouteItinerary({ points, routeId }: Props) {
 function DayCard({ leg, onPress }: { leg: Leg; onPress: (l: Leg) => void }) {
   const accentColor = TYPE_COLOR[leg.to.type] ?? Colors.primary
   const hasDistance = (leg.to.distanceFromPrevNm ?? 0) > 0
+  const stopCount = leg.to.intermediateStops?.length ?? 0
 
   return (
     <TouchableOpacity
@@ -303,6 +318,13 @@ function DayCard({ leg, onPress }: { leg: Leg; onPress: (l: Leg) => void }) {
         {(leg.to.sailTimeHours ?? 0) > 0 && (
           <View style={styles.statPill}>
             <Text style={styles.statPillText}>{formatSailTime(leg.to.sailTimeHours)}</Text>
+          </View>
+        )}
+        {stopCount > 0 && (
+          <View style={[styles.statPill, { backgroundColor: accentColor + '14' }]}>
+            <Text style={[styles.statPillText, { color: accentColor }]}>
+              {stopCount} stop{stopCount > 1 ? 's' : ''}
+            </Text>
           </View>
         )}
       </View>
@@ -369,6 +391,69 @@ function SheetContent({
       {/* Description */}
       {!!leg.to.description && (
         <Text style={styles.sheetDescription}>{leg.to.description}</Text>
+      )}
+
+      {/* Intermediate stops timeline */}
+      {(leg.to.intermediateStops?.length ?? 0) > 0 && (
+        <View style={styles.sheetSection}>
+          <Text style={styles.sheetSectionTitle}>Along the Way</Text>
+          <View style={styles.timeline}>
+            {/* Departure node */}
+            <View style={styles.tlNodeRow}>
+              <View style={styles.tlIconCol}>
+                <View style={[styles.tlSmallDot, { backgroundColor: Colors.textMuted }]} />
+              </View>
+              <Text style={styles.tlFromLabel}>{leg.from.name}</Text>
+            </View>
+
+            {leg.to.intermediateStops!.map((stop) => {
+              const cfg = STOP_CONFIG[stop.type] ?? { color: Colors.secondary, emoji: '📍', label: stop.type }
+              return (
+                <React.Fragment key={stop.id}>
+                  <View style={styles.tlConnectorRow}>
+                    <View style={styles.tlIconCol}><View style={styles.tlLine} /></View>
+                  </View>
+                  <View style={styles.tlNodeRow}>
+                    <View style={styles.tlIconCol}>
+                      <View style={[styles.tlStopDot, { backgroundColor: cfg.color }]}>
+                        <Text style={styles.tlEmoji}>{cfg.emoji}</Text>
+                      </View>
+                    </View>
+                    <View style={styles.tlBody}>
+                      <View style={styles.tlNameRow}>
+                        <Text style={[styles.tlName, { color: cfg.color }]}>{stop.name}</Text>
+                        {stop.isRecommended && (
+                          <View style={[styles.tlBadge, { backgroundColor: cfg.color + '18' }]}>
+                            <Text style={[styles.tlBadgeText, { color: cfg.color }]}>★ Rec</Text>
+                          </View>
+                        )}
+                      </View>
+                      <Text style={styles.tlDesc}>{stop.description}</Text>
+                      {stop.durationMins != null && (
+                        <Text style={styles.tlDuration}>
+                          ~{stop.durationMins < 60 ? `${stop.durationMins}min` : `${(stop.durationMins / 60).toFixed(1).replace('.0', '')}h`}
+                        </Text>
+                      )}
+                    </View>
+                  </View>
+                </React.Fragment>
+              )
+            })}
+
+            {/* Connector + destination node */}
+            <View style={styles.tlConnectorRow}>
+              <View style={styles.tlIconCol}><View style={styles.tlLine} /></View>
+            </View>
+            <View style={styles.tlNodeRow}>
+              <View style={styles.tlIconCol}>
+                <View style={[styles.tlSmallDot, { backgroundColor: TYPE_COLOR[leg.to.type] ?? Colors.primary }]} />
+              </View>
+              <Text style={[styles.tlFromLabel, { color: TYPE_COLOR[leg.to.type] ?? Colors.primary, fontWeight: '700' }]}>
+                {leg.to.name}
+              </Text>
+            </View>
+          </View>
+        </View>
       )}
 
       {/* Highlights */}
@@ -556,4 +641,22 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   mapBtnText: { flex: 1, fontSize: 15, fontWeight: '700', color: '#fff' },
+
+  // Intermediate stops timeline
+  timeline: { marginTop: 4 },
+  tlNodeRow: { flexDirection: 'row', alignItems: 'flex-start' },
+  tlConnectorRow: { flexDirection: 'row' },
+  tlIconCol: { width: 36, alignItems: 'center' },
+  tlSmallDot: { width: 10, height: 10, borderRadius: 5, marginTop: 3 },
+  tlStopDot: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  tlEmoji: { fontSize: 14 },
+  tlLine: { width: 1.5, height: 14, backgroundColor: Colors.border },
+  tlBody: { flex: 1, paddingBottom: 10 },
+  tlNameRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 3 },
+  tlName: { fontSize: 14, fontWeight: '700', flexShrink: 1 },
+  tlBadge: { borderRadius: 5, paddingHorizontal: 5, paddingVertical: 2, flexShrink: 0 },
+  tlBadgeText: { fontSize: 10, fontWeight: '700' },
+  tlFromLabel: { fontSize: 13, color: Colors.textMuted, fontWeight: '500', paddingTop: 2, flex: 1 },
+  tlDesc: { fontSize: 12, color: Colors.textSecondary, lineHeight: 18 },
+  tlDuration: { fontSize: 11, color: Colors.textMuted, marginTop: 3 },
 })
