@@ -1,26 +1,121 @@
-import axios from 'axios'
-import * as SecureStore from 'expo-secure-store'
+import axios, { AxiosError } from 'axios'
+import { useAuthStore } from '../store/authStore'
 import { SEED_ROUTES, SEED_POINTS, getPointsForRoute } from '../data/seedRoutes'
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000'
+
+if (__DEV__ && API_URL.includes('localhost')) {
+  console.warn(
+    '[api] BASE_URL is localhost — requests will fail on a real device.\n' +
+    'Set EXPO_PUBLIC_API_URL=http://<your-machine-ip>:3000 in .env and restart Expo.'
+  )
+}
 
 export const api = axios.create({
   baseURL: `${API_URL}/api`,
   timeout: 15000,
 })
 
-api.interceptors.request.use(async (config) => {
-  const token = await SecureStore.getItemAsync('auth_token')
-  if (token) config.headers.Authorization = `Bearer ${token}`
+// ── Request interceptor ───────────────────────────────────────────────────────
+//
+// Reads the token from the Zustand auth store's in-memory state.
+//
+// WHY NOT SecureStore?
+//   SecureStore is the persistence layer (disk). The Zustand store is the
+//   runtime source of truth: it is populated from SecureStore once on app
+//   start (loadAuth), and then stays current for the lifetime of the session.
+//   Reading from the store is synchronous, avoiding all async-interceptor
+//   timing problems and ensuring we always use the same token that the rest
+//   of the app believes is active.
+//
+// HOW TO USE ZUSTAND OUTSIDE REACT:
+//   useAuthStore is both a React hook and a store object. Calling
+//   useAuthStore.getState() (not as a hook) is safe anywhere — no component
+//   context required.
+
+api.interceptors.request.use((config) => {
+  const token = useAuthStore.getState().token
+
+  if (token) {
+    config.headers.set('Authorization', `Bearer ${token}`)
+  } else if (__DEV__) {
+    // Log missing token only for endpoints that typically require auth
+    const url = config.url ?? ''
+    const publicPaths = ['/auth/register', '/auth/login', '/health']
+    const isPublic = publicPaths.some((p) => url.includes(p))
+    if (!isPublic) {
+      console.warn(
+        `[api] ⚠ No auth token for ${config.method?.toUpperCase()} ${config.baseURL}${url}.\n` +
+        '  → User is not logged in, or loadAuth() has not yet completed.',
+      )
+    }
+  }
+
+  if (__DEV__) {
+    const authed = token ? '✓ authed' : '✗ no token'
+    console.log(`[api] → ${config.method?.toUpperCase()} ${config.baseURL}${config.url} (${authed})`)
+  }
+
   return config
 })
 
+// ── Response / error interceptor ─────────────────────────────────────────────
+//
+// On 401: clears auth from BOTH the Zustand store and SecureStore (via
+// clearAuth). This keeps them in sync — the store is always the authority.
+//
+// On network failure: replaces the raw "Network Error" with a message that
+// names the URL and current API_URL, so developers know where to look.
+//
+// Server error messages from { error: "..." } JSON bodies are surfaced as the
+// exception's .message, so catch blocks in screens get readable strings.
+
 api.interceptors.response.use(
   (res) => res,
-  (err) => {
-    if (err.response?.status === 401) {
-      SecureStore.deleteItemAsync('auth_token')
+  (err: AxiosError) => {
+    if (__DEV__) {
+      if (err.response) {
+        console.error(
+          `[api] ✗ ${err.response.status} ${err.config?.method?.toUpperCase()} ` +
+          `${err.config?.baseURL}${err.config?.url}`,
+          err.response.data,
+        )
+      } else if (err.request) {
+        console.error(
+          `[api] ✗ No response for ${err.config?.method?.toUpperCase()} ` +
+          `${err.config?.baseURL}${err.config?.url}\n` +
+          `  code=${err.code}  message=${err.message}\n` +
+          `  → Is the backend running? Is EXPO_PUBLIC_API_URL set correctly? (currently: ${API_URL})`,
+        )
+      } else {
+        console.error('[api] ✗ Request setup error:', err.message)
+      }
     }
+
+    if (err.response?.status === 401) {
+      // Clear auth from both Zustand store (in-memory) and SecureStore (persisted).
+      // This keeps them in sync and causes auth-gated UI to show the login screen.
+      useAuthStore.getState().clearAuth()
+
+      if (__DEV__) {
+        console.warn(
+          '[api] 401 received — auth cleared. User will need to log in again.\n' +
+          `  URL: ${err.config?.baseURL}${err.config?.url}`,
+        )
+      }
+    }
+
+    // Replace raw axios error messages with the server's own error string,
+    // so screens can show `err.message` directly in alerts/toasts.
+    const serverMessage = (err.response?.data as any)?.error
+    if (serverMessage) {
+      err.message = serverMessage
+    } else if (!err.response) {
+      err.message =
+        `Cannot reach server at ${API_URL}. ` +
+        `Check that the backend is running and EXPO_PUBLIC_API_URL is correct.`
+    }
+
     return Promise.reject(err)
   }
 )
@@ -36,6 +131,31 @@ export const authApi = {
     api.put('/auth/me', data).then((r) => r.data),
 }
 
+function filterSeedRoutes(params?: {
+  region?: string
+  difficulty?: string
+  search?: string
+}) {
+  let result = [...SEED_ROUTES]
+  if (params?.region && params.region !== 'All') {
+    result = result.filter((r) => r.region.includes(params.region!))
+  }
+  if (params?.difficulty && params.difficulty !== 'All') {
+    result = result.filter((r) => r.difficulty === params.difficulty)
+  }
+  if (params?.search) {
+    const q = params.search.toLowerCase()
+    result = result.filter(
+      (r) =>
+        r.title.toLowerCase().includes(q) ||
+        r.description.toLowerCase().includes(q) ||
+        r.region.toLowerCase().includes(q) ||
+        r.tags.some((tag) => tag.toLowerCase().includes(q)),
+    )
+  }
+  return result
+}
+
 // Routes
 export const routesApi = {
   list: async (params?: {
@@ -46,52 +166,13 @@ export const routesApi = {
     maxPrice?: number
     search?: string
   }) => {
+    const seedRoutes = filterSeedRoutes(params)
     try {
-      // First try to get routes from API
       const apiRoutes = await api.get('/routes', { params }).then((r) => r.data)
-      
-      // Filter seed routes based on params
-      let filteredSeedRoutes = [...SEED_ROUTES]
-      
-      if (params?.region && params.region !== 'All') {
-        filteredSeedRoutes = filteredSeedRoutes.filter(r => r.region.includes(params.region!))
-      }
-      if (params?.difficulty && params.difficulty !== 'All') {
-        filteredSeedRoutes = filteredSeedRoutes.filter(r => r.difficulty === params.difficulty)
-      }
-      if (params?.search) {
-        const searchLower = params.search.toLowerCase()
-        filteredSeedRoutes = filteredSeedRoutes.filter(r => 
-          r.title.toLowerCase().includes(searchLower) ||
-          r.description.toLowerCase().includes(searchLower) ||
-          r.region.toLowerCase().includes(searchLower) ||
-          r.tags.some(tag => tag.toLowerCase().includes(searchLower))
-        )
-      }
-      
-      // Combine API routes with filtered seed routes
-      return [...filteredSeedRoutes, ...apiRoutes]
-    } catch (error) {
-      // If API fails, return only seed routes (filtered)
-      let filteredSeedRoutes = [...SEED_ROUTES]
-      
-      if (params?.region && params.region !== 'All') {
-        filteredSeedRoutes = filteredSeedRoutes.filter(r => r.region.includes(params.region!))
-      }
-      if (params?.difficulty && params.difficulty !== 'All') {
-        filteredSeedRoutes = filteredSeedRoutes.filter(r => r.difficulty === params.difficulty)
-      }
-      if (params?.search) {
-        const searchLower = params.search.toLowerCase()
-        filteredSeedRoutes = filteredSeedRoutes.filter(r => 
-          r.title.toLowerCase().includes(searchLower) ||
-          r.description.toLowerCase().includes(searchLower) ||
-          r.region.toLowerCase().includes(searchLower) ||
-          r.tags.some(tag => tag.toLowerCase().includes(searchLower))
-        )
-      }
-      
-      return filteredSeedRoutes
+      return [...seedRoutes, ...apiRoutes]
+    } catch {
+      // API unavailable — serve seed routes only (dev / offline mode)
+      return seedRoutes
     }
   },
   get: async (id: string) => {

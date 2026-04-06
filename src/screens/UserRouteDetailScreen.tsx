@@ -95,6 +95,28 @@ export default function UserRouteDetailScreen() {
     longitude: item.lng,
   }))
 
+  // Day grouping: only active when stops have day structure
+  const hasDayStructure = stopItems.some((item) => (item.stop.dayIndex ?? 0) > 0)
+  const dayGroupsDetail = (() => {
+    if (!hasDayStructure) return []
+    const maxDay = Math.max(...stopItems.map((item) => item.stop.dayIndex ?? 0))
+    const groups: { day: number; items: typeof stopItems; nm: number }[] = []
+    for (let d = 0; d <= maxDay; d++) {
+      const dayItems = stopItems.filter((item) => (item.stop.dayIndex ?? 0) === d)
+      let nm = 0
+      for (let i = 0; i < dayItems.length - 1; i++) {
+        const a = dayItems[i], b = dayItems[i + 1]
+        const R = 3440.065
+        const dLat = ((b.lat - a.lat) * Math.PI) / 180
+        const dLng = ((b.lng - a.lng) * Math.PI) / 180
+        const av = Math.sin(dLat / 2) ** 2 + Math.cos((a.lat * Math.PI) / 180) * Math.cos((b.lat * Math.PI) / 180) * Math.sin(dLng / 2) ** 2
+        nm += R * 2 * Math.atan2(Math.sqrt(av), Math.sqrt(1 - av))
+      }
+      if (dayItems.length > 0) groups.push({ day: d, items: dayItems, nm: Math.round(nm * 10) / 10 })
+    }
+    return groups
+  })()
+
   const handleFitMap = () => {
     if (polylineCoords.length === 0) return
     mapRef.current?.fitToCoordinates(polylineCoords, {
@@ -373,77 +395,154 @@ export default function UserRouteDetailScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Stops ({stopItems.length})</Text>
           <View style={styles.stopsList}>
-            {stopItems.map((item, i) => {
-              const next = stopItems[i + 1]
-              let legNm: number | null = null
-              if (next) {
-                const R = 3440.065
-                const dLat = ((next.lat - item.lat) * Math.PI) / 180
-                const dLng = ((next.lng - item.lng) * Math.PI) / 180
-                const a = Math.sin(dLat / 2) ** 2 +
-                  Math.cos((item.lat * Math.PI) / 180) *
-                  Math.cos((next.lat * Math.PI) / 180) *
-                  Math.sin(dLng / 2) ** 2
-                legNm = Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) * 10) / 10
-              }
-              const stopColor = STOP_TYPE_COLORS[item.stop.type ?? 'CUSTOM'] ?? STOP_TYPE_COLORS.CUSTOM
-              const stopTypeLabel = STOP_TYPE_LABELS[item.stop.type ?? 'CUSTOM']
-              return (
-                <View key={item.stop.id} style={styles.stopRow}>
-                  <View style={styles.seqCol}>
-                    <View style={[styles.seqDot, { backgroundColor: STOP_COLORS[i % STOP_COLORS.length] }]}>
-                      <Text style={styles.seqDotText}>{i + 1}</Text>
+            {hasDayStructure ? (
+              // ── Day-grouped rendering ──
+              dayGroupsDetail.map((group) => {
+                const dayColor = STOP_COLORS[group.day % STOP_COLORS.length]
+                return (
+                  <View key={group.day}>
+                    <View style={[styles.dayHeader, { backgroundColor: dayColor + '18', borderColor: dayColor + '35' }]}>
+                      <View style={[styles.dayHeaderDot, { backgroundColor: dayColor }]} />
+                      <Text style={[styles.dayHeaderTitle, { color: dayColor }]}>Day {group.day + 1}</Text>
+                      {group.nm > 0 && <Text style={[styles.dayHeaderNm, { color: dayColor }]}>{group.nm} nm</Text>}
                     </View>
-                    {i < stopItems.length - 1 && <View style={styles.seqLine} />}
+                    {group.items.map((item, idx) => {
+                      const globalIdx = stopItems.findIndex((s) => s.stop.id === item.stop.id)
+                      const next = group.items[idx + 1]
+                      let legNm: number | null = null
+                      if (next) {
+                        const R = 3440.065
+                        const dLat = ((next.lat - item.lat) * Math.PI) / 180
+                        const dLng = ((next.lng - item.lng) * Math.PI) / 180
+                        const a = Math.sin(dLat / 2) ** 2 + Math.cos((item.lat * Math.PI) / 180) * Math.cos((next.lat * Math.PI) / 180) * Math.sin(dLng / 2) ** 2
+                        legNm = Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) * 10) / 10
+                      }
+                      const stopColor = STOP_TYPE_COLORS[item.stop.type ?? 'CUSTOM'] ?? STOP_TYPE_COLORS.CUSTOM
+                      const stopTypeLabel = STOP_TYPE_LABELS[item.stop.type ?? 'CUSTOM']
+                      return (
+                        <View key={item.stop.id} style={styles.stopRow}>
+                          <View style={styles.seqCol}>
+                            <View style={[styles.seqDot, { backgroundColor: STOP_COLORS[globalIdx % STOP_COLORS.length] }]}>
+                              <Text style={styles.seqDotText}>{globalIdx + 1}</Text>
+                            </View>
+                            {idx < group.items.length - 1 && <View style={styles.seqLine} />}
+                          </View>
+                          <TouchableOpacity
+                            style={styles.stopCard}
+                            onPress={() => item.place ? router.push(`/place/${item.place.id}`) : undefined}
+                            activeOpacity={item.place ? 0.85 : 1}
+                          >
+                            <View style={styles.stopCardTop}>
+                              <View style={{ flex: 1 }}>
+                                <Text style={styles.stopName}>{item.name}</Text>
+                                <Text style={styles.stopLocation}>{item.location}</Text>
+                              </View>
+                              {item.place && <Ionicons name="chevron-forward" size={16} color={Colors.textMuted} />}
+                            </View>
+                            {item.stop.type && item.stop.type !== 'CUSTOM' && stopTypeLabel && (
+                              <View style={[styles.typeBadge, { backgroundColor: stopColor + '18' }]}>
+                                <View style={[styles.typeDot, { backgroundColor: stopColor }]} />
+                                <Text style={[styles.typeBadgeText, { color: stopColor }]}>{stopTypeLabel}</Text>
+                              </View>
+                            )}
+                            {(item.stop.estimatedStayDays ?? 0) > 0 && (
+                              <View style={styles.stayRow}>
+                                <Ionicons name="time-outline" size={12} color={Colors.textMuted} />
+                                <Text style={styles.stayText}>{item.stop.estimatedStayDays} day{item.stop.estimatedStayDays !== 1 ? 's' : ''} stay</Text>
+                              </View>
+                            )}
+                            {item.stop.notes ? (
+                              <View style={styles.notesCard}>
+                                <Ionicons name="document-text-outline" size={12} color={Colors.warning} />
+                                <Text style={styles.notesText} numberOfLines={3}>{item.stop.notes}</Text>
+                              </View>
+                            ) : null}
+                            {legNm !== null && (
+                              <View style={styles.legRow}>
+                                <Ionicons name="arrow-forward" size={11} color={Colors.textMuted} />
+                                <Text style={styles.legText}>{legNm} nm to next</Text>
+                              </View>
+                            )}
+                          </TouchableOpacity>
+                        </View>
+                      )
+                    })}
                   </View>
-
-                  <TouchableOpacity
-                    style={styles.stopCard}
-                    onPress={() => item.place ? router.push(`/place/${item.place.id}`) : undefined}
-                    activeOpacity={item.place ? 0.85 : 1}
-                  >
-                    <View style={styles.stopCardTop}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.stopName}>{item.name}</Text>
-                        <Text style={styles.stopLocation}>{item.location}</Text>
+                )
+              })
+            ) : (
+              // ── Flat rendering (no day structure) ──
+              stopItems.map((item, i) => {
+                const next = stopItems[i + 1]
+                let legNm: number | null = null
+                if (next) {
+                  const R = 3440.065
+                  const dLat = ((next.lat - item.lat) * Math.PI) / 180
+                  const dLng = ((next.lng - item.lng) * Math.PI) / 180
+                  const a = Math.sin(dLat / 2) ** 2 +
+                    Math.cos((item.lat * Math.PI) / 180) *
+                    Math.cos((next.lat * Math.PI) / 180) *
+                    Math.sin(dLng / 2) ** 2
+                  legNm = Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) * 10) / 10
+                }
+                const stopColor = STOP_TYPE_COLORS[item.stop.type ?? 'CUSTOM'] ?? STOP_TYPE_COLORS.CUSTOM
+                const stopTypeLabel = STOP_TYPE_LABELS[item.stop.type ?? 'CUSTOM']
+                return (
+                  <View key={item.stop.id} style={styles.stopRow}>
+                    <View style={styles.seqCol}>
+                      <View style={[styles.seqDot, { backgroundColor: STOP_COLORS[i % STOP_COLORS.length] }]}>
+                        <Text style={styles.seqDotText}>{i + 1}</Text>
                       </View>
-                      {item.place && <Ionicons name="chevron-forward" size={16} color={Colors.textMuted} />}
+                      {i < stopItems.length - 1 && <View style={styles.seqLine} />}
                     </View>
 
-                    {/* Type badge (shown when not CUSTOM) */}
-                    {item.stop.type && item.stop.type !== 'CUSTOM' && stopTypeLabel && (
-                      <View style={[styles.typeBadge, { backgroundColor: stopColor + '18' }]}>
-                        <View style={[styles.typeDot, { backgroundColor: stopColor }]} />
-                        <Text style={[styles.typeBadgeText, { color: stopColor }]}>{stopTypeLabel}</Text>
+                    <TouchableOpacity
+                      style={styles.stopCard}
+                      onPress={() => item.place ? router.push(`/place/${item.place.id}`) : undefined}
+                      activeOpacity={item.place ? 0.85 : 1}
+                    >
+                      <View style={styles.stopCardTop}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.stopName}>{item.name}</Text>
+                          <Text style={styles.stopLocation}>{item.location}</Text>
+                        </View>
+                        {item.place && <Ionicons name="chevron-forward" size={16} color={Colors.textMuted} />}
                       </View>
-                    )}
 
-                    {(item.stop.estimatedStayDays ?? 0) > 0 && (
-                      <View style={styles.stayRow}>
-                        <Ionicons name="time-outline" size={12} color={Colors.textMuted} />
-                        <Text style={styles.stayText}>
-                          {item.stop.estimatedStayDays} day{item.stop.estimatedStayDays !== 1 ? 's' : ''} stay
-                        </Text>
-                      </View>
-                    )}
+                      {item.stop.type && item.stop.type !== 'CUSTOM' && stopTypeLabel && (
+                        <View style={[styles.typeBadge, { backgroundColor: stopColor + '18' }]}>
+                          <View style={[styles.typeDot, { backgroundColor: stopColor }]} />
+                          <Text style={[styles.typeBadgeText, { color: stopColor }]}>{stopTypeLabel}</Text>
+                        </View>
+                      )}
 
-                    {item.stop.notes ? (
-                      <View style={styles.notesCard}>
-                        <Ionicons name="document-text-outline" size={12} color={Colors.warning} />
-                        <Text style={styles.notesText} numberOfLines={3}>{item.stop.notes}</Text>
-                      </View>
-                    ) : null}
+                      {(item.stop.estimatedStayDays ?? 0) > 0 && (
+                        <View style={styles.stayRow}>
+                          <Ionicons name="time-outline" size={12} color={Colors.textMuted} />
+                          <Text style={styles.stayText}>
+                            {item.stop.estimatedStayDays} day{item.stop.estimatedStayDays !== 1 ? 's' : ''} stay
+                          </Text>
+                        </View>
+                      )}
 
-                    {legNm !== null && (
-                      <View style={styles.legRow}>
-                        <Ionicons name="arrow-forward" size={11} color={Colors.textMuted} />
-                        <Text style={styles.legText}>{legNm} nm to next stop</Text>
-                      </View>
-                    )}
-                  </TouchableOpacity>
-                </View>
-              )
-            })}
+                      {item.stop.notes ? (
+                        <View style={styles.notesCard}>
+                          <Ionicons name="document-text-outline" size={12} color={Colors.warning} />
+                          <Text style={styles.notesText} numberOfLines={3}>{item.stop.notes}</Text>
+                        </View>
+                      ) : null}
+
+                      {legNm !== null && (
+                        <View style={styles.legRow}>
+                          <Ionicons name="arrow-forward" size={11} color={Colors.textMuted} />
+                          <Text style={styles.legText}>{legNm} nm to next stop</Text>
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                )
+              })
+            )}
           </View>
         </View>
 
@@ -703,4 +802,15 @@ const styles = StyleSheet.create({
   legText: { fontSize: 11, color: Colors.textMuted },
 
   metaDate: { fontSize: 12, color: Colors.textMuted, textAlign: 'center' },
+
+  // Day headers (when day structure is present)
+  dayHeader: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    borderRadius: 10, borderWidth: 1,
+    paddingHorizontal: 12, paddingVertical: 8,
+    marginBottom: 6, marginTop: 4,
+  },
+  dayHeaderDot: { width: 8, height: 8, borderRadius: 4 },
+  dayHeaderTitle: { fontSize: 13, fontWeight: '800', letterSpacing: -0.2 },
+  dayHeaderNm: { fontSize: 12, fontWeight: '600', flex: 1 },
 })

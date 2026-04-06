@@ -10,7 +10,7 @@ import React from 'react'
 import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity } from 'react-native'
 import { router } from 'expo-router'
 import { Ionicons } from '@expo/vector-icons'
-import { getSuggestedYachts } from '../services/mockCharters'
+import { useCharterStore } from '../store/charterStore'
 import { Yacht, BOAT_TYPE_LABELS } from '../types/charter'
 import { Colors } from '../constants/colors'
 
@@ -19,6 +19,7 @@ interface Props {
 }
 
 export function SuggestedYachts({ country }: Props) {
+  const getSuggestedYachts = useCharterStore((s) => s.getSuggestedYachts)
   const yachts = getSuggestedYachts(country, 4)
   if (yachts.length === 0) return null
   return (

@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { Stack } from 'expo-router'
 import { StatusBar } from 'expo-status-bar'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -12,7 +12,9 @@ import { useRouteBuilderStore } from '../src/store/routeBuilderStore'
 import { useConditionsStore } from '../src/store/conditionsStore'
 import { useContributorStore } from '../src/store/contributorStore'
 import { useCaptainStore } from '../src/store/captainStore'
+import { useSocialStore } from '../src/store/socialStore'
 import { RewardToast } from '../src/components/RewardToast'
+import { saveUserProfile } from '../src/lib/userService'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -22,15 +24,29 @@ const queryClient = new QueryClient({
 
 export default function RootLayout() {
   const loadAuth = useAuthStore((s) => s.loadAuth)
+  const user     = useAuthStore((s) => s.user)
   const loadProfile = useProfileStore((s) => s.loadProfile)
   const loadPlaces     = usePlacesStore((s) => s.loadPlaces)
   const initLocalUser  = usePlacesStore((s) => s.initLocalUser)
   const loadComments = useCommentsStore((s) => s.loadComments)
   const loadRoutes = useRouteBuilderStore((s) => s.loadRoutes)
+  const savedRoutes      = useRouteBuilderStore((s) => s.savedRoutes)
   const loadConditions   = useConditionsStore((s) => s.loadReports)
   const loadContributor  = useContributorStore((s) => s.loadContributor)
+  const totalPoints      = useContributorStore((s) => s.totalPoints)
   const loadCaptainData  = useCaptainStore((s) => s.loadCaptainData)
-  useEffect(() => { loadAuth(); loadProfile(); loadPlaces(); initLocalUser(); loadComments(); loadRoutes(); loadConditions(); loadContributor(); loadCaptainData() }, [])
+  const loadSocial       = useSocialStore((s) => s.load)
+  const syncedUserIdRef  = useRef<string | null>(null)
+
+  useEffect(() => { loadAuth(); loadProfile(); loadPlaces(); initLocalUser(); loadComments(); loadRoutes(); loadConditions(); loadContributor(); loadCaptainData(); loadSocial() }, [])
+
+  // Sync current user's public profile to Firestore so others can view it
+  useEffect(() => {
+    if (!user || syncedUserIdRef.current === user.id) return
+    syncedUserIdRef.current = user.id
+    const routesCreated = savedRoutes.length
+    saveUserProfile(user, totalPoints, routesCreated)
+  }, [user, totalPoints])
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
@@ -41,7 +57,6 @@ export default function RootLayout() {
             <Stack.Screen name="index" />
             <Stack.Screen name="(tabs)" />
             <Stack.Screen name="login" />
-            <Stack.Screen name="register" />
             <Stack.Screen name="route/[id]/index" />
             <Stack.Screen name="route/[id]/map" />
             <Stack.Screen name="navigate/[id]" />
@@ -59,6 +74,10 @@ export default function RootLayout() {
             <Stack.Screen name="captain-dashboard" />
             <Stack.Screen name="boat/[id]" />
             <Stack.Screen name="booking/[id]" />
+            <Stack.Screen name="user/[id]" />
+            <Stack.Screen name="follow-list" />
+            <Stack.Screen name="conversations" />
+            <Stack.Screen name="chat/[id]" />
           </Stack>
           <RewardToast />
         </QueryClientProvider>

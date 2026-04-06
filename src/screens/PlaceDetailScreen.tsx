@@ -273,6 +273,208 @@ export default function PlaceDetailScreen() {
             <Text style={styles.description}>{place.description}</Text>
           </View>
 
+          {/* Contact */}
+          {place.contact && (place.contact.phone || place.contact.vhf !== undefined) && (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Contact</Text>
+              <View style={styles.infoCard}>
+                {place.contact.phone && (
+                  <TouchableOpacity
+                    style={styles.infoRow}
+                    onPress={() => Linking.openURL(`tel:${place.contact!.phone}`)}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="call-outline" size={15} color={Colors.secondary} />
+                    <Text style={styles.infoLabel}>Phone</Text>
+                    <Text style={[styles.infoValue, styles.infoLink]}>{place.contact.phone}</Text>
+                  </TouchableOpacity>
+                )}
+                {place.contact.vhf !== undefined && (
+                  <View style={styles.infoRow}>
+                    <Ionicons name="radio-outline" size={15} color={Colors.secondary} />
+                    <Text style={styles.infoLabel}>VHF</Text>
+                    <Text style={styles.infoValue}>Ch {place.contact.vhf}</Text>
+                  </View>
+                )}
+              </View>
+            </View>
+          )}
+
+          {/* Mooring */}
+          {place.mooring && (place.mooring.type || place.mooring.depth || place.mooring.holding) && (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Mooring</Text>
+              <View style={styles.infoCard}>
+                {place.mooring.type && (
+                  <View style={styles.infoRow}>
+                    <Ionicons name="boat-outline" size={15} color={Colors.secondary} />
+                    <Text style={styles.infoLabel}>Type</Text>
+                    <Text style={styles.infoValue}>{place.mooring.type}</Text>
+                  </View>
+                )}
+                {place.mooring.depth && (
+                  <View style={styles.infoRow}>
+                    <Ionicons name="arrow-down-outline" size={15} color={Colors.secondary} />
+                    <Text style={styles.infoLabel}>Depth</Text>
+                    <Text style={styles.infoValue}>{place.mooring.depth}</Text>
+                  </View>
+                )}
+                {place.mooring.holding && (
+                  <View style={styles.infoRow}>
+                    <Ionicons name="git-network-outline" size={15} color={Colors.secondary} />
+                    <Text style={styles.infoLabel}>Holding</Text>
+                    <Text style={styles.infoValue}>{place.mooring.holding}</Text>
+                  </View>
+                )}
+              </View>
+            </View>
+          )}
+
+          {/* Anchorage info */}
+          {place.anchorageInfo && (
+            place.anchorageInfo.depth || place.anchorageInfo.bottom ||
+            place.anchorageInfo.holding || place.anchorageInfo.shelter
+          ) && (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Anchorage</Text>
+              <View style={styles.infoCard}>
+                {place.anchorageInfo.depth && (
+                  <View style={styles.infoRow}>
+                    <Ionicons name="arrow-down-outline" size={15} color={Colors.secondary} />
+                    <Text style={styles.infoLabel}>Depth</Text>
+                    <Text style={styles.infoValue}>{place.anchorageInfo.depth}</Text>
+                  </View>
+                )}
+                {place.anchorageInfo.bottom && (
+                  <View style={styles.infoRow}>
+                    <Ionicons name="layers-outline" size={15} color={Colors.secondary} />
+                    <Text style={styles.infoLabel}>Bottom</Text>
+                    <Text style={styles.infoValue}>{place.anchorageInfo.bottom}</Text>
+                  </View>
+                )}
+                {place.anchorageInfo.holding && (
+                  <View style={styles.infoRow}>
+                    <Ionicons name="git-network-outline" size={15} color={Colors.secondary} />
+                    <Text style={styles.infoLabel}>Holding</Text>
+                    <Text style={styles.infoValue}>{place.anchorageInfo.holding}</Text>
+                  </View>
+                )}
+                {place.anchorageInfo.shelter && (
+                  <View style={styles.infoRow}>
+                    <Ionicons name="shield-outline" size={15} color={Colors.secondary} />
+                    <Text style={styles.infoLabel}>Shelter</Text>
+                    <Text style={styles.infoValue}>{place.anchorageInfo.shelter}</Text>
+                  </View>
+                )}
+              </View>
+            </View>
+          )}
+
+          {/* Facilities */}
+          {place.facilities && (() => {
+            const f = place.facilities!
+            const rows: { label: string; value: string; icon: string }[] = []
+            if (f.fuel)        rows.push({ label: 'Fuel',        value: f.fuel,        icon: 'flame-outline' })
+            if (f.water)       rows.push({ label: 'Water',       value: f.water,       icon: 'water-outline' })
+            if (f.electricity) rows.push({ label: 'Electricity', value: f.electricity, icon: 'flash-outline' })
+            if (f.toilets)     rows.push({ label: 'Toilets',     value: f.toilets,     icon: 'man-outline' })
+            if (f.showers)     rows.push({ label: 'Showers',     value: f.showers,     icon: 'rainy-outline' })
+            if (f.laundry)     rows.push({ label: 'Laundry',     value: f.laundry,     icon: 'shirt-outline' })
+            if (rows.length === 0) return null
+            return (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Facilities</Text>
+                <View style={styles.infoCard}>
+                  {rows.map((row) => (
+                    <View key={row.label} style={styles.infoRow}>
+                      <Ionicons name={row.icon as any} size={15} color={Colors.secondary} />
+                      <Text style={styles.infoLabel}>{row.label}</Text>
+                      <Text style={styles.infoValue}>{row.value}</Text>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            )
+          })()}
+
+          {/* Town */}
+          {place.town && (() => {
+            const t = place.town!
+            const rows: { label: string; value: string; icon: string }[] = []
+            if (t.restaurants) rows.push({ label: 'Restaurants', value: t.restaurants, icon: 'restaurant-outline' })
+            if (t.bars)        rows.push({ label: 'Bars',        value: t.bars,        icon: 'wine-outline' })
+            if (t.supermarket) rows.push({ label: 'Supermarket', value: t.supermarket, icon: 'cart-outline' })
+            if (t.bakery)      rows.push({ label: 'Bakery',      value: t.bakery,      icon: 'cafe-outline' })
+            if (t.atm)         rows.push({ label: 'ATM',         value: t.atm,         icon: 'cash-outline' })
+            if (rows.length === 0) return null
+            return (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Town</Text>
+                <View style={styles.infoCard}>
+                  {rows.map((row) => (
+                    <View key={row.label} style={styles.infoRow}>
+                      <Ionicons name={row.icon as any} size={15} color={Colors.secondary} />
+                      <Text style={styles.infoLabel}>{row.label}</Text>
+                      <Text style={styles.infoValue}>{row.value}</Text>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            )
+          })()}
+
+          {/* Highlights */}
+          {place.highlights && place.highlights.length > 0 && (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Highlights</Text>
+              <View style={styles.highlightsList}>
+                {place.highlights.map((item, i) => (
+                  <View key={i} style={styles.highlightRow}>
+                    <Text style={styles.highlightBullet}>•</Text>
+                    <Text style={styles.highlightText}>{item}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          )}
+
+          {/* Best for */}
+          {place.bestFor && place.bestFor.length > 0 && (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Best For</Text>
+              <View style={styles.bestForRow}>
+                {place.bestFor.map((item, i) => (
+                  <View key={i} style={styles.bestForPill}>
+                    <Text style={styles.bestForText}>{item}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          )}
+
+          {/* Public notes */}
+          {place.publicNotes && (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Notes</Text>
+              <View style={styles.publicNotesCard}>
+                <Text style={styles.publicNotesText}>{place.publicNotes}</Text>
+              </View>
+            </View>
+          )}
+
+          {/* Heads up */}
+          {place.headsUp && (
+            <View style={styles.section}>
+              <View style={styles.headsUpCard}>
+                <Ionicons name="warning-outline" size={16} color="#B45309" />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.headsUpTitle}>Heads Up</Text>
+                  <Text style={styles.headsUpText}>{place.headsUp}</Text>
+                </View>
+              </View>
+            </View>
+          )}
+
           {/* User-created badge */}
           {place.isUserCreated && (
             <View style={styles.yourPlaceBadge}>
@@ -930,6 +1132,51 @@ const styles = StyleSheet.create({
     gap: 8, backgroundColor: Colors.secondary, borderRadius: 14, paddingVertical: 13,
   },
   directionsBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+
+  // Structured info card
+  infoCard: {
+    backgroundColor: '#fff', borderRadius: 14, overflow: 'hidden',
+    borderWidth: 1, borderColor: Colors.border,
+  },
+  infoRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    paddingHorizontal: 14, paddingVertical: 11,
+    borderBottomWidth: 1, borderBottomColor: Colors.border + '80',
+  },
+  infoLabel: { fontSize: 14, color: Colors.textSecondary, flex: 1 },
+  infoValue: { fontSize: 14, fontWeight: '600', color: Colors.text },
+  infoLink: { color: Colors.secondary, textDecorationLine: 'underline' },
+
+  // Highlights
+  highlightsList: { gap: 8 },
+  highlightRow: { flexDirection: 'row', gap: 10, alignItems: 'flex-start' },
+  highlightBullet: { fontSize: 18, color: Colors.secondary, lineHeight: 22, marginTop: -1 },
+  highlightText: { flex: 1, fontSize: 14, color: Colors.textSecondary, lineHeight: 22 },
+
+  // Best for
+  bestForRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  bestForPill: {
+    backgroundColor: '#EFF6FF', borderRadius: 20,
+    paddingHorizontal: 12, paddingVertical: 5,
+    borderWidth: 1, borderColor: '#BFDBFE',
+  },
+  bestForText: { fontSize: 13, color: Colors.secondary, fontWeight: '600' },
+
+  // Public notes
+  publicNotesCard: {
+    backgroundColor: '#F8FAFC', borderRadius: 12, padding: 14,
+    borderWidth: 1, borderColor: Colors.border,
+  },
+  publicNotesText: { fontSize: 14, color: Colors.textSecondary, lineHeight: 22 },
+
+  // Heads up warning
+  headsUpCard: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 10,
+    backgroundColor: '#FFFBEB', borderRadius: 12, padding: 14,
+    borderWidth: 1, borderColor: '#FDE68A', borderLeftWidth: 3, borderLeftColor: '#F59E0B',
+  },
+  headsUpTitle: { fontSize: 13, fontWeight: '700', color: '#92400E', marginBottom: 3 },
+  headsUpText: { fontSize: 14, color: '#78350F', lineHeight: 20 },
 
   // Not found
   notFound: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },

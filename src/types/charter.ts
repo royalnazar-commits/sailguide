@@ -35,6 +35,9 @@ export interface Yacht {
   lat: number
   lng: number
 
+  // ── Charter company (maps to backend CharterCompany.id) ─────────────────────
+  charterCompanyId?: string
+
   // ── Charter info ────────────────────────────────────────────────────────────
   pricePerWeekEur: number
   depositEur: number

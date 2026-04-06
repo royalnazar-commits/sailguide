@@ -1,14 +1,14 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  Dimensions,
+  Dimensions, ActivityIndicator,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { router, useLocalSearchParams } from 'expo-router'
 import { Ionicons } from '@expo/vector-icons'
 import { BoatGallery } from '../components/charter/BoatGallery'
 import { AvailabilityCalendar } from '../components/charter/AvailabilityCalendar'
-import { getYachtById } from '../services/mockCharters'
+import { useCharterStore } from '../store/charterStore'
 import { BOAT_TYPE_LABELS, SkipperOption } from '../types/charter'
 import { Colors } from '../constants/colors'
 
@@ -44,7 +44,27 @@ export default function BoatDetailScreen() {
   const [selectedCheckIn, setSelectedCheckIn] = useState<string | null>(null)
   const [activeSection, setActiveSection] = useState<'specs' | 'equipment' | 'reviews' | 'availability'>('specs')
 
-  const yacht = getYachtById(id ?? '')
+  const { getYachtById, loadYachtDetail, loadAvailability, bookedWeeks, detailLoading } = useCharterStore()
+
+  const yachtId = id ?? ''
+  const isLoading = detailLoading[yachtId] ?? false
+  const yacht = getYachtById(yachtId)
+  const availabilityWeeks = bookedWeeks[yachtId] ?? yacht?.bookedWeeks ?? []
+
+  useEffect(() => {
+    if (yachtId) {
+      loadYachtDetail(yachtId)
+      loadAvailability(yachtId, new Date().getFullYear())
+    }
+  }, [yachtId])
+
+  if (isLoading && !yacht) {
+    return (
+      <View style={[styles.notFound, { paddingTop: insets.top }]}>
+        <ActivityIndicator size="large" color={Colors.primary} />
+      </View>
+    )
+  }
 
   if (!yacht) {
     return (
@@ -232,7 +252,7 @@ export default function BoatDetailScreen() {
               Select your charter week. Availability is updated in real time.
             </Text>
             <AvailabilityCalendar
-              bookedWeeks={yacht.bookedWeeks}
+              bookedWeeks={availabilityWeeks}
               selectedCheckIn={selectedCheckIn}
               onSelectWeek={(checkIn) => {
                 setSelectedCheckIn(checkIn)

@@ -1,9 +1,11 @@
 import React, { useState } from 'react'
-import { View, Text, Image, TouchableOpacity, StyleSheet } from 'react-native'
+import { View, Text, Image, TouchableOpacity, StyleSheet, ScrollView } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
 import { Route } from '../types'
 import { Colors } from '../constants/colors'
 import { useProfileStore } from '../store/profileStore'
+import { getPointsForRoute } from '../data/seedRoutes'
+import { RoutePreviewMap } from './RoutePreviewMap'
 
 interface Props {
   route: Route
@@ -11,6 +13,7 @@ interface Props {
   showSaveIndicator?: boolean
 }
 
+const MEDIA_HEIGHT = 210
 const ROUTE_FALLBACK = 'https://images.unsplash.com/photo-1502680390469-be75c86b636f?w=800&q=80'
 
 const difficultyColor = { EASY: '#22C55E', MODERATE: '#F59E0B', ADVANCED: '#EF4444' }
@@ -22,57 +25,108 @@ const difficultyIcon: Record<string, any> = {
 }
 
 export function RouteCard({ route, onPress, showSaveIndicator = false }: Props) {
-  const { savedRoutes } = useProfileStore()
+  const { savedRoutes, preferences } = useProfileStore()
+  const distLabel = preferences.distanceUnit === 'km'
+    ? `${Math.round(route.totalNm * 1.852)} km`
+    : `${route.totalNm} nm`
   const isSaved = savedRoutes.includes(route.id)
   const accentColor = difficultyColor[route.difficulty]
   const reviewCount = route._count?.reviews ?? 0
+  const points = getPointsForRoute(route.id)
   const [imgErr, setImgErr] = useState(false)
+  const [mediaWidth, setMediaWidth] = useState(0)
+  const [activeSlide, setActiveSlide] = useState(0)
   const heroUri = imgErr ? ROUTE_FALLBACK : (route.previewPhotos[0] || ROUTE_FALLBACK)
 
   return (
-    <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.92}>
-      {/* ── Image with overlaid badges ── */}
-      <View>
-        <Image
-          source={{ uri: heroUri }}
-          style={styles.image}
-          onError={() => setImgErr(true)}
-        />
+    // Plain View — no gesture handler here so the inner ScrollView can swipe freely
+    <View style={styles.card}>
 
-        {/* Scrim for badge readability */}
-        <View style={styles.imageScrim} />
+      {/* ── Swipeable media block ─────────────────────────────────────────── */}
+      <View
+        style={styles.mediaBlock}
+        onLayout={(e) => setMediaWidth(e.nativeEvent.layout.width)}
+      >
+        {mediaWidth > 0 && (
+          <ScrollView
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            scrollEventThrottle={16}
+            bounces={false}
+            decelerationRate="fast"
+            disableIntervalMomentum
+            onMomentumScrollEnd={(e) => {
+              setActiveSlide(Math.round(e.nativeEvent.contentOffset.x / mediaWidth))
+            }}
+          >
+            {/* Slide 1 — Photo (tap to open route) */}
+            <TouchableOpacity
+              style={{ width: mediaWidth, height: MEDIA_HEIGHT }}
+              onPress={onPress}
+              activeOpacity={0.92}
+            >
+              <Image
+                source={{ uri: heroUri }}
+                style={{ width: mediaWidth, height: MEDIA_HEIGHT }}
+                onError={() => setImgErr(true)}
+              />
+              {/* Scrim */}
+              <View style={styles.imageScrim} />
 
-        {/* Bottom-left: difficulty + season */}
-        <View style={styles.imageBadgesLeft}>
-          <View style={[styles.difficultyBadge, { backgroundColor: accentColor }]}>
-            <Ionicons name={difficultyIcon[route.difficulty]} size={11} color="#fff" />
-            <Text style={styles.difficultyText}>{difficultyLabel[route.difficulty]}</Text>
-          </View>
-          {route.season && (
-            <View style={styles.seasonBadge}>
-              <Text style={styles.seasonText}>{route.season}</Text>
-            </View>
-          )}
-        </View>
+              {/* Bottom-left: difficulty + season */}
+              <View style={styles.imageBadgesLeft}>
+                <View style={[styles.difficultyBadge, { backgroundColor: accentColor }]}>
+                  <Ionicons name={difficultyIcon[route.difficulty]} size={11} color="#fff" />
+                  <Text style={styles.difficultyText}>{difficultyLabel[route.difficulty]}</Text>
+                </View>
+                {route.season && (
+                  <View style={styles.seasonBadge}>
+                    <Text style={styles.seasonText}>{route.season}</Text>
+                  </View>
+                )}
+              </View>
 
-        {/* Top-right: verified + saved */}
-        <View style={styles.imageBadgesRight}>
-          {route.isVerified && (
-            <View style={styles.verifiedBadge}>
-              <Ionicons name="checkmark-circle" size={12} color="#fff" />
-              <Text style={styles.verifiedText}>Verified</Text>
-            </View>
-          )}
-          {showSaveIndicator && isSaved && (
-            <View style={styles.savedBadge}>
-              <Ionicons name="bookmark" size={13} color="#fff" />
-            </View>
-          )}
+              {/* Top-right: verified + saved */}
+              <View style={styles.imageBadgesRight}>
+                {route.isVerified && (
+                  <View style={styles.verifiedBadge}>
+                    <Ionicons name="checkmark-circle" size={12} color="#fff" />
+                    <Text style={styles.verifiedText}>Verified</Text>
+                  </View>
+                )}
+                {showSaveIndicator && isSaved && (
+                  <View style={styles.savedBadge}>
+                    <Ionicons name="bookmark" size={13} color="#fff" />
+                  </View>
+                )}
+              </View>
+            </TouchableOpacity>
+
+            {/* Slide 2 — Route map (tap to open route) */}
+            <TouchableOpacity
+              style={{ width: mediaWidth, height: MEDIA_HEIGHT }}
+              onPress={onPress}
+              activeOpacity={0.92}
+            >
+              <RoutePreviewMap points={points} height={MEDIA_HEIGHT} />
+            </TouchableOpacity>
+          </ScrollView>
+        )}
+
+        {/* Dot indicators — always on top, pass through touches */}
+        <View style={styles.dots} pointerEvents="none">
+          {[0, 1].map((i) => (
+            <View
+              key={i}
+              style={[styles.dot, activeSlide === i ? styles.dotActive : styles.dotInactive]}
+            />
+          ))}
         </View>
       </View>
 
-      {/* ── Card body ── */}
-      <View style={styles.body}>
+      {/* ── Card body ── tappable separately so media swipe stays conflict-free */}
+      <TouchableOpacity style={styles.body} onPress={onPress} activeOpacity={0.85}>
         <Text style={styles.title} numberOfLines={2}>{route.title}</Text>
 
         <View style={styles.locationRow}>
@@ -84,7 +138,7 @@ export function RouteCard({ route, onPress, showSaveIndicator = false }: Props) 
         <View style={styles.statsRow}>
           <StatItem icon="time-outline" value={`${route.durationDays} days`} />
           <View style={styles.statDivider} />
-          <StatItem icon="navigate-outline" value={`${route.totalNm} nm`} />
+          <StatItem icon="navigate-outline" value={distLabel} />
           {route.avgRating > 0 && (
             <>
               <View style={styles.statDivider} />
@@ -111,8 +165,8 @@ export function RouteCard({ route, onPress, showSaveIndicator = false }: Props) 
             </Text>
           </View>
         </View>
-      </View>
-    </TouchableOpacity>
+      </TouchableOpacity>
+    </View>
   )
 }
 
@@ -137,78 +191,64 @@ const styles = StyleSheet.create({
     elevation: 4,
     marginBottom: 16,
   },
-  image: { width: '100%', height: 200 },
+
+  // ── Media block ──────────────────────────────────────────────────────────
+  mediaBlock: {
+    height: MEDIA_HEIGHT,
+    backgroundColor: '#E8F4FD', // placeholder colour while layout fires
+  },
   imageScrim: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: 72,
-    backgroundColor: 'rgba(0,0,0,0.38)',
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    height: 72, backgroundColor: 'rgba(0,0,0,0.38)',
   },
   imageBadgesLeft: {
-    position: 'absolute',
-    bottom: 10,
-    left: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
+    position: 'absolute', bottom: 10, left: 12,
+    flexDirection: 'row', alignItems: 'center', gap: 6,
   },
   imageBadgesRight: {
-    position: 'absolute',
-    top: 12,
-    right: 12,
-    alignItems: 'flex-end',
-    gap: 6,
+    position: 'absolute', top: 12, right: 12,
+    alignItems: 'flex-end', gap: 6,
   },
   difficultyBadge: {
-    borderRadius: 20,
-    paddingHorizontal: 9,
-    paddingVertical: 4,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
+    borderRadius: 20, paddingHorizontal: 9, paddingVertical: 4,
+    flexDirection: 'row', alignItems: 'center', gap: 4,
   },
   difficultyText: { color: '#fff', fontSize: 11, fontWeight: '700' },
   seasonBadge: {
     backgroundColor: 'rgba(255,255,255,0.18)',
-    borderRadius: 20,
-    paddingHorizontal: 9,
-    paddingVertical: 4,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.35)',
+    borderRadius: 20, paddingHorizontal: 9, paddingVertical: 4,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.35)',
   },
   seasonText: { color: '#fff', fontSize: 11, fontWeight: '500' },
   verifiedBadge: {
     backgroundColor: Colors.secondary,
-    borderRadius: 20,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
+    borderRadius: 20, paddingHorizontal: 8, paddingVertical: 4,
+    flexDirection: 'row', alignItems: 'center', gap: 4,
   },
   verifiedText: { color: '#fff', fontSize: 11, fontWeight: '600' },
   savedBadge: {
-    backgroundColor: Colors.primary,
-    borderRadius: 16,
-    width: 28,
-    height: 28,
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: Colors.primary, borderRadius: 16,
+    width: 28, height: 28, alignItems: 'center', justifyContent: 'center',
   },
+
+  // ── Dot indicators ───────────────────────────────────────────────────────
+  dots: {
+    position: 'absolute', bottom: 10, left: 0, right: 0,
+    flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 5,
+  },
+  dot: { height: 6, borderRadius: 3 },
+  dotActive: { width: 18, backgroundColor: '#fff' },
+  dotInactive: { width: 6, backgroundColor: 'rgba(255,255,255,0.50)' },
+
+  // ── Card body ────────────────────────────────────────────────────────────
   body: { padding: 14 },
   title: { fontSize: 17, fontWeight: '700', color: Colors.text, marginBottom: 5 },
   locationRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 12 },
   region: { fontSize: 13, color: Colors.textSecondary },
   statsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.background,
-    borderRadius: 10,
-    paddingVertical: 8,
-    paddingHorizontal: 4,
-    marginBottom: 12,
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: Colors.background, borderRadius: 10,
+    paddingVertical: 8, paddingHorizontal: 4, marginBottom: 12,
   },
   statItem: { flexDirection: 'row', alignItems: 'center', gap: 4, flex: 1, justifyContent: 'center' },
   statText: { fontSize: 13, color: Colors.textSecondary, fontWeight: '500' },
@@ -217,10 +257,8 @@ const styles = StyleSheet.create({
   captainRow: { flexDirection: 'row', alignItems: 'center', gap: 4, flex: 1, marginRight: 8 },
   captainName: { fontSize: 13, color: Colors.textSecondary, flex: 1 },
   pricePill: {
-    backgroundColor: Colors.primary + '15',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    backgroundColor: Colors.primary + '15', borderRadius: 8,
+    paddingHorizontal: 10, paddingVertical: 5,
   },
   pricePillFree: { backgroundColor: '#22C55E18' },
   price: { fontSize: 16, fontWeight: '700', color: Colors.primary },

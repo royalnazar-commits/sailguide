@@ -1,6 +1,7 @@
 import React from 'react'
-import { View, Text, Image, StyleSheet } from 'react-native'
+import { View, Text, Image, StyleSheet, TouchableOpacity } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
+import { router } from 'expo-router'
 import { Colors } from '../constants/colors'
 
 interface Props {
@@ -8,11 +9,15 @@ interface Props {
   avatarUrl?: string
   isVerified?: boolean
   subtitle?: string
+  /** When provided, tapping the badge navigates to /user/[userId] */
+  userId?: string
 }
 
-export function CaptainBadge({ name, avatarUrl, isVerified, subtitle }: Props) {
-  return (
-    <View style={styles.container}>
+export function CaptainBadge({ name, avatarUrl, isVerified, subtitle, userId }: Props) {
+  const handlePress = userId ? () => router.push(`/user/${userId}`) : undefined
+
+  const inner = (
+    <>
       {avatarUrl ? (
         <Image source={{ uri: avatarUrl }} style={styles.avatar} />
       ) : (
@@ -29,8 +34,19 @@ export function CaptainBadge({ name, avatarUrl, isVerified, subtitle }: Props) {
         </View>
         {subtitle && <Text style={styles.subtitle}>{subtitle}</Text>}
       </View>
-    </View>
+      {userId && <Ionicons name="chevron-forward" size={16} color={Colors.textMuted} />}
+    </>
   )
+
+  if (handlePress) {
+    return (
+      <TouchableOpacity style={styles.container} onPress={handlePress} activeOpacity={0.75}>
+        {inner}
+      </TouchableOpacity>
+    )
+  }
+
+  return <View style={styles.container}>{inner}</View>
 }
 
 const styles = StyleSheet.create({

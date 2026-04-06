@@ -69,6 +69,44 @@ export interface Place {
   /** Price in USD. Only meaningful when isPremium is true. */
   priceUsd?: number
 
+  // ── Structured POI info fields ───────────────────────────────────────────
+  contact?: {
+    phone?: string
+    vhf?: number
+  }
+  mooring?: {
+    /** e.g. 'stern-to', 'bow-to', 'alongside' */
+    type?: string
+    depth?: string
+    holding?: string
+  }
+  facilities?: {
+    fuel?: string
+    water?: string
+    electricity?: string
+    toilets?: string
+    showers?: string
+    laundry?: string
+  }
+  town?: {
+    restaurants?: string
+    bars?: string
+    supermarket?: string
+    bakery?: string
+    atm?: string
+  }
+  anchorageInfo?: {
+    depth?: string
+    bottom?: string
+    holding?: string
+    shelter?: string
+  }
+  highlights?: string[]
+  bestFor?: string[]
+  /** Public notes — visible to all users (distinct from private `notes`) */
+  publicNotes?: string
+  headsUp?: string
+
   // ── Moderation / admin fields ────────────────────────────────────────────
   /** Publish/moderation status — undefined treated as published (seed data) */
   status?: PlaceStatus

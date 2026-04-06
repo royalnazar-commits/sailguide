@@ -3,7 +3,8 @@ import {
   View, Text, StyleSheet, TouchableOpacity,
   ActivityIndicator, Animated, ScrollView, PanResponder,
 } from 'react-native'
-import MapView, { Marker, Polyline, PROVIDER_DEFAULT } from 'react-native-maps'
+import MapView, { Marker, PROVIDER_DEFAULT } from 'react-native-maps'
+import { MaritimePolyline } from '../components/MaritimePolyline'
 import { useQuery } from '@tanstack/react-query'
 import { router, useLocalSearchParams } from 'expo-router'
 import { Ionicons } from '@expo/vector-icons'
@@ -40,6 +41,23 @@ const PIN_CONFIG: Record<string, { color: string; icon: string; label: string }>
 
 const PANEL_HEIGHT = 340
 
+// Static legend data — hoisted to module level to avoid allocation on every render
+const LEGEND_ROUTE_ITEMS = [
+  { type: 'MARINA',    cfg: PIN_CONFIG.MARINA },
+  { type: 'ANCHORAGE', cfg: PIN_CONFIG.ANCHORAGE },
+  { type: 'FUEL',      cfg: PIN_CONFIG.FUEL },
+  { type: 'DANGER',    cfg: PIN_CONFIG.DANGER },
+]
+
+const LEGEND_STOP_ITEMS = [
+  { key: 'SWIM',    cfg: STOP_MARKER_CONFIG.SWIM },
+  { key: 'SNORKEL', cfg: STOP_MARKER_CONFIG.SNORKEL },
+  { key: 'BEACH',   cfg: STOP_MARKER_CONFIG.BEACH },
+  { key: 'SCENIC',  cfg: STOP_MARKER_CONFIG.SCENIC },
+  { key: 'LUNCH',   cfg: STOP_MARKER_CONFIG.LUNCH },
+  { key: 'VILLAGE', cfg: STOP_MARKER_CONFIG.VILLAGE },
+]
+
 // Returns true if the stop's coords are within a reasonable bounding box of its leg
 function isStopInLegBounds(stop: IntermediateStop, from: RoutePoint | undefined, to: RoutePoint): boolean {
   if (!from) return true
@@ -51,6 +69,69 @@ function isStopInLegBounds(stop: IntermediateStop, from: RoutePoint | undefined,
     stop.lng <= Math.max(from.lng, to.lng) + MARGIN
   )
 }
+
+// ─── Memoized marker components ──────────────────────────────────────────────
+
+interface RouteMarkerProps {
+  point: RoutePoint
+  index: number
+  isSelected: boolean
+  onPress: (point: RoutePoint) => void
+}
+
+const RouteMarker = React.memo(function RouteMarker({ point, index, isSelected, onPress }: RouteMarkerProps) {
+  const cfg = PIN_CONFIG[point.type] ?? PIN_CONFIG.WAYPOINT
+  const handlePress = useCallback((e: any) => {
+    e.stopPropagation()
+    onPress(point)
+  }, [onPress, point])
+  return (
+    <Marker
+      coordinate={{ latitude: point.lat, longitude: point.lng }}
+      onPress={handlePress}
+      tracksViewChanges={isSelected}
+      anchor={{ x: 0.5, y: 0.5 }}
+    >
+      <View style={[
+        styles.markerOuter,
+        { borderColor: cfg.color, transform: [{ scale: isSelected ? 1.25 : 1 }] },
+      ]}>
+        <View style={[styles.markerInner, { backgroundColor: cfg.color }]}>
+          <Text style={styles.markerNum}>{index + 1}</Text>
+        </View>
+      </View>
+    </Marker>
+  )
+})
+
+interface IntermediateStopMarkerProps {
+  stop: IntermediateStop
+  isSelected: boolean
+  onPress: (stop: IntermediateStop) => void
+}
+
+const IntermediateStopMarker = React.memo(function IntermediateStopMarker({ stop, isSelected, onPress }: IntermediateStopMarkerProps) {
+  const cfg = STOP_MARKER_CONFIG[stop.type] ?? { color: Colors.secondary, emoji: '📍', label: stop.type }
+  const handlePress = useCallback((e: any) => {
+    e.stopPropagation()
+    onPress(stop)
+  }, [onPress, stop])
+  return (
+    <Marker
+      coordinate={{ latitude: stop.lat, longitude: stop.lng }}
+      anchor={{ x: 0.5, y: 0.5 }}
+      tracksViewChanges={isSelected}
+      onPress={handlePress}
+    >
+      <View style={[
+        styles.stopMarkerOuter,
+        { backgroundColor: cfg.color, transform: [{ scale: isSelected ? 1.2 : 1 }] },
+      ]}>
+        <Text style={styles.stopMarkerEmoji}>{cfg.emoji}</Text>
+      </View>
+    </Marker>
+  )
+})
 
 // ─── Main screen ─────────────────────────────────────────────────────────────
 
@@ -96,6 +177,23 @@ export default function RouteMapScreen() {
     }
     return coords
   }, [points, id])
+
+  // Flat list of valid intermediate stops, recomputed only when points change
+  const filteredIntermediateStops = useMemo(() =>
+    points.flatMap((point, idx) => {
+      const fromPoint = idx > 0 ? points[idx - 1] : undefined
+      return (point.intermediateStops ?? []).filter(
+        (stop) => isStopInLegBounds(stop, fromPoint, point),
+      )
+    }),
+    [points],
+  )
+
+  // Derived index avoids O(n) indexOf on every render
+  const selectedPointIndex = useMemo(
+    () => (selectedPoint ? points.findIndex((p) => p.id === selectedPoint.id) : -1),
+    [selectedPoint, points],
+  )
 
   // Fit map once both map is ready and points are loaded
   useEffect(() => {
@@ -155,6 +253,7 @@ export default function RouteMapScreen() {
     const legCoords = fromPoint
       ? [{ latitude: fromPoint.lat, longitude: fromPoint.lng }, { latitude: toPoint.lat, longitude: toPoint.lng }]
       : [{ latitude: toPoint.lat, longitude: toPoint.lng }]
+    // Deferred so the map has settled its layout before the camera move
     setTimeout(() => {
       mapRef.current?.fitToCoordinates(legCoords, {
         edgePadding: { top: 100, right: 60, bottom: PANEL_HEIGHT + 80, left: 60 },
@@ -201,6 +300,27 @@ export default function RouteMapScreen() {
   const closePanelRef = useRef(closePanel)
   navigateStopRef.current = navigateStop
   closePanelRef.current = closePanel
+
+  // Stable marker press handlers — passed as props to memoized marker components
+  const handleRouteMarkerPress = useCallback((point: RoutePoint) => {
+    openPanel(point)
+    animateToPoint(point)
+  }, [openPanel, animateToPoint])
+
+  const handleStopMarkerPress = useCallback((stop: IntermediateStop) => {
+    openPoiPanel(stop)
+    mapRef.current?.animateToRegion({
+      latitude: stop.lat,
+      longitude: stop.lng,
+      latitudeDelta: 0.05,
+      longitudeDelta: 0.05,
+    }, 400)
+  }, [openPoiPanel])
+
+  // Stable map background tap handler
+  const onMapPress = useCallback(() => {
+    if (selectedPoint || selectedStop) closePanel()
+  }, [selectedPoint, selectedStop, closePanel])
 
   // PanResponder for the panel: horizontal swipe → next/prev stop, vertical swipe down → close
   const panResponder = useRef(
@@ -257,7 +377,7 @@ export default function RouteMapScreen() {
         style={StyleSheet.absoluteFill}
         provider={PROVIDER_DEFAULT}
         onMapReady={() => setMapReady(true)}
-        onPress={() => (selectedPoint || selectedStop) && closePanel()}
+        onPress={onMapPress}
         showsUserLocation
         showsCompass={false}
         showsScale={false}
@@ -270,83 +390,36 @@ export default function RouteMapScreen() {
       >
         {/* Route polyline */}
         {coordinates.length > 1 && (
-          <Polyline
+          <MaritimePolyline
             coordinates={coordinates}
-            strokeColor={Colors.routeLine}
-            strokeWidth={3}
-            lineCap="round"
-            lineJoin="round"
+            color={Colors.routeLine}
+            strokeWidth={3.5}
+            smoothPasses={1}
+            showArrows
+            arrowCount={5}
           />
         )}
 
         {/* Stop markers */}
-        {points.map((point, index) => {
-          const cfg = PIN_CONFIG[point.type] ?? PIN_CONFIG.WAYPOINT
-          const isSelected = selectedPoint?.id === point.id
-          return (
-            <Marker
-              key={point.id}
-              coordinate={{ latitude: point.lat, longitude: point.lng }}
-              onPress={(e) => {
-                e.stopPropagation()
-                openPanel(point)
-                animateToPoint(point)
-              }}
-              tracksViewChanges={isSelected}
-              anchor={{ x: 0.5, y: 0.5 }}
-            >
-              <View
-                style={[
-                  styles.markerOuter,
-                  {
-                    borderColor: cfg.color,
-                    transform: [{ scale: isSelected ? 1.25 : 1 }],
-                  },
-                ]}
-              >
-                <View style={[styles.markerInner, { backgroundColor: cfg.color }]}>
-                  <Text style={styles.markerNum}>{index + 1}</Text>
-                </View>
-              </View>
-            </Marker>
-          )
-        })}
+        {points.map((point, index) => (
+          <RouteMarker
+            key={point.id}
+            point={point}
+            index={index}
+            isSelected={selectedPoint?.id === point.id}
+            onPress={handleRouteMarkerPress}
+          />
+        ))}
 
-        {/* Intermediate stop markers */}
-        {points.flatMap((point, idx) => {
-          const fromPoint = idx > 0 ? points[idx - 1] : undefined
-          return (point.intermediateStops ?? [])
-            .filter((stop) => isStopInLegBounds(stop, fromPoint, point))
-            .map((stop) => {
-              const cfg = STOP_MARKER_CONFIG[stop.type] ?? { color: Colors.secondary, emoji: '📍', label: stop.type }
-              const isSelected = selectedStop?.id === stop.id
-              return (
-                <Marker
-                  key={stop.id}
-                  coordinate={{ latitude: stop.lat, longitude: stop.lng }}
-                  anchor={{ x: 0.5, y: 0.5 }}
-                  tracksViewChanges={isSelected}
-                  onPress={(e) => {
-                    e.stopPropagation()
-                    openPoiPanel(stop)
-                    mapRef.current?.animateToRegion({
-                      latitude: stop.lat,
-                      longitude: stop.lng,
-                      latitudeDelta: 0.05,
-                      longitudeDelta: 0.05,
-                    }, 400)
-                  }}
-                >
-                  <View style={[
-                    styles.stopMarkerOuter,
-                    { backgroundColor: cfg.color, transform: [{ scale: isSelected ? 1.2 : 1 }] },
-                  ]}>
-                    <Text style={styles.stopMarkerEmoji}>{cfg.emoji}</Text>
-                  </View>
-                </Marker>
-              )
-            })
-        })}
+        {/* Intermediate stop markers — derived from filteredIntermediateStops memo */}
+        {filteredIntermediateStops.map((stop) => (
+          <IntermediateStopMarker
+            key={stop.id}
+            stop={stop}
+            isSelected={selectedStop?.id === stop.id}
+            onPress={handleStopMarkerPress}
+          />
+        ))}
       </MapView>
 
       {/* Loading overlay */}
@@ -391,7 +464,7 @@ export default function RouteMapScreen() {
         {selectedPoint && (
           <StopCard
             point={selectedPoint}
-            index={points.indexOf(selectedPoint)}
+            index={selectedPointIndex}
             total={points.length}
             onClose={closePanel}
             panResponder={panResponder}
@@ -412,36 +485,23 @@ export default function RouteMapScreen() {
 
 // ─── Map legend ──────────────────────────────────────────────────────────────
 
-function MapLegend({ bottomInset }: { bottomInset: number }) {
+const MapLegend = React.memo(function MapLegend({ bottomInset }: { bottomInset: number }) {
   const [expanded, setExpanded] = useState(false)
-  const routeItems = [
-    { type: 'MARINA',    cfg: PIN_CONFIG.MARINA },
-    { type: 'ANCHORAGE', cfg: PIN_CONFIG.ANCHORAGE },
-    { type: 'FUEL',      cfg: PIN_CONFIG.FUEL },
-    { type: 'DANGER',    cfg: PIN_CONFIG.DANGER },
-  ]
-  const stopItems = [
-    { key: 'SWIM',      cfg: STOP_MARKER_CONFIG.SWIM },
-    { key: 'SNORKEL',   cfg: STOP_MARKER_CONFIG.SNORKEL },
-    { key: 'BEACH',     cfg: STOP_MARKER_CONFIG.BEACH },
-    { key: 'SCENIC',    cfg: STOP_MARKER_CONFIG.SCENIC },
-    { key: 'LUNCH',     cfg: STOP_MARKER_CONFIG.LUNCH },
-    { key: 'VILLAGE',   cfg: STOP_MARKER_CONFIG.VILLAGE },
-  ]
+  const toggle = useCallback(() => setExpanded((v) => !v), [])
 
   return (
     <View style={[styles.legend, { bottom: Math.max(20, bottomInset) + PANEL_HEIGHT + 12 }]}>
       {expanded && (
         <View style={styles.legendItems}>
           <Text style={styles.legendGroupTitle}>Route Stops</Text>
-          {routeItems.map(({ type, cfg }) => (
+          {LEGEND_ROUTE_ITEMS.map(({ type, cfg }) => (
             <View key={type} style={styles.legendRow}>
               <View style={[styles.legendDot, { backgroundColor: cfg.color }]} />
               <Text style={styles.legendText}>{cfg.label}</Text>
             </View>
           ))}
           <Text style={[styles.legendGroupTitle, { marginTop: 8 }]}>Points of Interest</Text>
-          {stopItems.map(({ key, cfg }) => (
+          {LEGEND_STOP_ITEMS.map(({ key, cfg }) => (
             <View key={key} style={styles.legendRow}>
               <Text style={styles.legendEmoji}>{cfg.emoji}</Text>
               <Text style={styles.legendText}>{cfg.label}</Text>
@@ -451,7 +511,7 @@ function MapLegend({ bottomInset }: { bottomInset: number }) {
       )}
       <TouchableOpacity
         style={styles.legendToggle}
-        onPress={() => setExpanded((v) => !v)}
+        onPress={toggle}
         activeOpacity={0.7}
       >
         <Ionicons
@@ -462,7 +522,7 @@ function MapLegend({ bottomInset }: { bottomInset: number }) {
       </TouchableOpacity>
     </View>
   )
-}
+})
 
 // ─── Stop detail card ────────────────────────────────────────────────────────
 
@@ -475,7 +535,7 @@ interface StopCardProps {
   handlePan: ReturnType<typeof PanResponder.create>
 }
 
-function StopCard({ point, index, total, onClose, panResponder, handlePan }: StopCardProps) {
+const StopCard = React.memo(function StopCard({ point, index, total, onClose, panResponder, handlePan }: StopCardProps) {
   const cfg = PIN_CONFIG[point.type] ?? PIN_CONFIG.WAYPOINT
 
   return (
@@ -552,11 +612,11 @@ function StopCard({ point, index, total, onClose, panResponder, handlePan }: Sto
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.stopsScroll}>
               <View style={styles.stopsRow}>
                 {point.intermediateStops!.map((stop) => {
-                  const cfg = STOP_MARKER_CONFIG[stop.type] ?? { color: Colors.secondary, emoji: '📍', label: stop.type }
+                  const stopCfg = STOP_MARKER_CONFIG[stop.type] ?? { color: Colors.secondary, emoji: '📍', label: stop.type }
                   return (
-                    <View key={stop.id} style={[styles.stopChip, { borderColor: cfg.color }]}>
-                      <Text style={styles.stopChipEmoji}>{cfg.emoji}</Text>
-                      <Text style={[styles.stopChipName, { color: cfg.color }]} numberOfLines={1}>{stop.name}</Text>
+                    <View key={stop.id} style={[styles.stopChip, { borderColor: stopCfg.color }]}>
+                      <Text style={styles.stopChipEmoji}>{stopCfg.emoji}</Text>
+                      <Text style={[styles.stopChipName, { color: stopCfg.color }]} numberOfLines={1}>{stop.name}</Text>
                     </View>
                   )
                 })}
@@ -594,16 +654,16 @@ function StopCard({ point, index, total, onClose, panResponder, handlePan }: Sto
       </ScrollView>
     </View>
   )
-}
+})
 
-function StatPill({ icon, value }: { icon: any; value: string }) {
+const StatPill = React.memo(function StatPill({ icon, value }: { icon: any; value: string }) {
   return (
     <View style={styles.statPill}>
       <Ionicons name={icon} size={12} color={Colors.secondary} />
       <Text style={styles.statPillText}>{value}</Text>
     </View>
   )
-}
+})
 
 // ─── POI Card ────────────────────────────────────────────────────────────────
 
@@ -613,7 +673,7 @@ interface PoiCardProps {
   handlePan: ReturnType<typeof PanResponder.create>
 }
 
-function PoiCard({ stop, onClose, handlePan }: PoiCardProps) {
+const PoiCard = React.memo(function PoiCard({ stop, onClose, handlePan }: PoiCardProps) {
   const cfg = STOP_MARKER_CONFIG[stop.type] ?? { color: Colors.secondary, emoji: '📍', label: stop.type }
   return (
     <View>
@@ -658,7 +718,7 @@ function PoiCard({ stop, onClose, handlePan }: PoiCardProps) {
       </ScrollView>
     </View>
   )
-}
+})
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
 

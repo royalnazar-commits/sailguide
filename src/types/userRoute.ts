@@ -22,10 +22,16 @@ export interface UserRouteStop {
   /** Display name for custom waypoints */
   name?: string
   /**
-   * Stop type badge — MARINA, ANCHORAGE, BAY, BEACH, CAVE, LAGOON, FUEL, CUSTOM.
+   * Stop type badge — MARINA, ANCHORAGE, BAY, BEACH, CAVE, LAGOON, FUEL, SWIM, CUSTOM.
    * Defaults to CUSTOM when not set.
    */
   type?: string
+  /**
+   * Which day this stop belongs to (0-based).
+   * Assigned automatically by autoSplitDays() or manually by the captain.
+   * Undefined = day 0.
+   */
+  dayIndex?: number
 }
 
 export interface UserRoute {
@@ -50,6 +56,13 @@ export interface UserRoute {
   publishedAt?: string
   createdAt: string
   updatedAt: string
+
+  // ── Visibility ────────────────────────────────────────────────────────────
+  /**
+   * When false, the route is hidden from the community catalog.
+   * Defaults to true (public) when not set.
+   */
+  isPublic?: boolean
 
   // ── Captain monetization fields ──────────────────────────────────────────
   /** True when the captain has set this route as a paid item */

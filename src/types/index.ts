@@ -24,6 +24,13 @@ export interface User {
   avatarUrl?: string
   isVerifiedCaptain: boolean
   createdAt: string
+  // Contact
+  messenger?: string
+  instagram?: string
+  // Yacht
+  yachtName?: string
+  yachtType?: string
+  yachtLengthM?: number
 }
 
 export interface Captain {

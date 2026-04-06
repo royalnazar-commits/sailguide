@@ -19,10 +19,14 @@ const difficultyColors = { EASY: Colors.success, MODERATE: Colors.warning, ADVAN
 export default function RouteDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>()
   const insets = useSafeAreaInsets()
-  const { savedRoutes, toggleSaveRoute } = useProfileStore()
+  const { savedRoutes, toggleSaveRoute, preferences } = useProfileStore()
 
   const route = SEED_ROUTES.find((r) => r.id === id)
   if (!route) return null
+
+  const distLabel = preferences.distanceUnit === 'km'
+    ? `${Math.round(route.totalNm * 1.852)} km`
+    : `${route.totalNm} nm`
 
   const isSaved = savedRoutes.includes(route.id)
   const routePoints = getPointsForRoute(route.id)
@@ -61,7 +65,7 @@ export default function RouteDetailScreen() {
       </View>
 
       <View style={styles.body}>
-        {/* Badges */}
+        {/* Badges + inline map button */}
         <View style={styles.badgeRow}>
           {route.isVerified && (
             <View style={styles.verifiedBadge}>
@@ -74,12 +78,20 @@ export default function RouteDetailScreen() {
               {route.difficulty.charAt(0) + route.difficulty.slice(1).toLowerCase()}
             </Text>
           </View>
+          <TouchableOpacity
+            style={styles.inlineMapBtn}
+            onPress={() => router.push(`/route/${id}/map`)}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="navigate" size={13} color="#fff" />
+            <Text style={styles.inlineMapText}>View on Map</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Stats grid */}
         <View style={styles.statsGrid}>
           <StatBox icon="time-outline" value={`${route.durationDays} days`} label="Duration" />
-          <StatBox icon="navigate-outline" value={`${route.totalNm} nm`} label="Distance" />
+          <StatBox icon="navigate-outline" value={distLabel} label="Distance" />
           {route.avgRating > 0 && (
             <StatBox icon="star" value={route.avgRating.toFixed(1)} label="Rating" iconColor="#F59E0B" />
           )}
@@ -118,6 +130,7 @@ export default function RouteDetailScreen() {
             avatarUrl={route.creator.avatarUrl}
             isVerified={route.creator.isVerifiedCaptain}
             subtitle={route.creator.bio?.substring(0, 80) || 'Verified sailing captain'}
+            userId={route.creator.id}
           />
         </View>
 
@@ -136,13 +149,6 @@ export default function RouteDetailScreen() {
         )}
       </View>
 
-      {/* Bottom bar */}
-      <View style={[styles.bottomBar, { paddingBottom: Math.max(16, insets.bottom) }]}>
-        <TouchableOpacity style={styles.navigateBtn} onPress={() => router.push(`/route/${id}/map`)} activeOpacity={0.7}>
-          <Ionicons name="navigate" size={18} color="#fff" />
-          <Text style={styles.navigateText}>View on Map</Text>
-        </TouchableOpacity>
-      </View>
     </ScrollView>
   )
 }
@@ -191,7 +197,14 @@ const styles = StyleSheet.create({
   },
 
   body: { padding: 20 },
-  badgeRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
+  badgeRow: { flexDirection: 'row', gap: 8, marginBottom: 10, alignItems: 'center' },
+  inlineMapBtn: {
+    marginLeft: 'auto',
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    backgroundColor: Colors.secondary,
+    borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5,
+  },
+  inlineMapText: { fontSize: 12, color: '#fff', fontWeight: '700' },
   verifiedBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#EFF6FF', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
   verifiedText: { fontSize: 12, color: Colors.verified, fontWeight: '600' },
   diffBadge: { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
@@ -211,15 +224,5 @@ const styles = StyleSheet.create({
   },
   mapPreviewText: { flex: 1, fontSize: 15, color: Colors.secondary, fontWeight: '600' },
   verifiedDate: { fontSize: 12, color: Colors.textMuted, marginBottom: 8 },
-  bottomBar: {
-    position: 'absolute', bottom: 0, left: 0, right: 0,
-    backgroundColor: '#fff', padding: 16, flexDirection: 'row', gap: 10,
-    borderTopWidth: 1, borderTopColor: Colors.border,
-    shadowColor: '#000', shadowOffset: { width: 0, height: -2 }, shadowOpacity: 0.06, shadowRadius: 8,
-  },
-  navigateBtn: {
-    flex: 1, backgroundColor: Colors.secondary, borderRadius: 14, paddingVertical: 14,
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-  },
-  navigateText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+
 })

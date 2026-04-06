@@ -1,7 +1,8 @@
 import React, { useEffect, useRef } from 'react'
 import {
   View, Text, TouchableOpacity, StyleSheet,
-  Animated, Pressable, Alert,
+  Animated, Pressable, Alert, PanResponder,
+  Image, ScrollView, Platform,
 } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
 import { router } from 'expo-router'
@@ -23,7 +24,7 @@ interface Props {
 
 export function PlacePopup({ place, onClose, onReposition }: Props) {
   const meta = getPlaceTypeMeta(place.type)
-  const translateY = useRef(new Animated.Value(280)).current
+  const translateY = useRef(new Animated.Value(320)).current
 
   const { getCommentsForPlace, getAvgRatingForPlace } = useCommentsStore()
   const { getActiveReportsForPlace } = useConditionsStore()
@@ -34,7 +35,6 @@ export function PlacePopup({ place, onClose, onReposition }: Props) {
   const liveRating    = getAvgRatingForPlace(place.id)
   const activeReports = getActiveReportsForPlace(place.id)
 
-  // Resolve the current user: prefer real auth user, fall back to device-local ID
   const currentUserId = authUser?.id ?? localUserId
   const currentRole   = authUser?.role
 
@@ -53,11 +53,33 @@ export function PlacePopup({ place, onClose, onReposition }: Props) {
 
   const dismiss = () => {
     Animated.timing(translateY, {
-      toValue: 280,
-      duration: 210,
+      toValue: 360,
+      duration: 220,
       useNativeDriver: true,
     }).start(() => onClose())
   }
+
+  // Swipe-to-dismiss — dragging the card downward past a threshold closes it
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_, g) =>
+        g.dy > 6 && Math.abs(g.dy) > Math.abs(g.dx),
+      onPanResponderGrant: () => { translateY.stopAnimation() },
+      onPanResponderMove: (_, g) => {
+        if (g.dy > 0) translateY.setValue(g.dy)
+      },
+      onPanResponderRelease: (_, g) => {
+        if (g.dy > 80 || g.vy > 0.45) {
+          dismiss()
+        } else {
+          Animated.spring(translateY, {
+            toValue: 0, tension: 68, friction: 10, useNativeDriver: true,
+          }).start()
+        }
+      },
+    })
+  ).current
 
   const handleViewDetails = () => {
     dismiss()
@@ -93,7 +115,25 @@ export function PlacePopup({ place, onClose, onReposition }: Props) {
       <Animated.View
         style={[styles.card, { transform: [{ translateY }] }]}
         onStartShouldSetResponder={() => true}
+        {...panResponder.panHandlers}
       >
+        {/* Drag handle — visual affordance for swipe-to-dismiss */}
+        <View style={styles.dragHandle} />
+
+        {/* Photo strip — shown when the place has photos */}
+        {place.photos.length > 0 && (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.photoStrip}
+            contentContainerStyle={styles.photoStripContent}
+          >
+            {place.photos.slice(0, 6).map((uri, i) => (
+              <Image key={i} source={{ uri }} style={styles.photoThumb} resizeMode="cover" />
+            ))}
+          </ScrollView>
+        )}
+
         {/* Header row */}
         <View style={styles.header}>
           <View style={[styles.typeBadge, { backgroundColor: meta.bg }]}>
@@ -210,15 +250,37 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: '#fff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20,
-    paddingBottom: 32,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingTop: 12,
+    paddingHorizontal: 20,
+    paddingBottom: Platform.OS === 'ios' ? 36 : 24,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: -4 },
     shadowOpacity: 0.12,
-    shadowRadius: 16,
-    elevation: 12,
+    shadowRadius: 20,
+    elevation: 14,
+  },
+  dragHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#D1D5DB',
+    alignSelf: 'center',
+    marginBottom: 16,
+  },
+  photoStrip: {
+    marginBottom: 14,
+    marginHorizontal: -20,
+  },
+  photoStripContent: {
+    paddingHorizontal: 20,
+    gap: 8,
+  },
+  photoThumb: {
+    width: 100,
+    height: 80,
+    borderRadius: 10,
   },
   header: {
     flexDirection: 'row',

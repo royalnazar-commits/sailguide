@@ -2,15 +2,16 @@ import React, { useState } from 'react'
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, KeyboardAvoidingView, Platform, Switch, Alert,
-  Image,
+  Image, ActivityIndicator,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { router, useLocalSearchParams } from 'expo-router'
 import { Ionicons } from '@expo/vector-icons'
 import { AvailabilityCalendar } from '../components/charter/AvailabilityCalendar'
-import { getYachtById } from '../services/mockCharters'
+import { useCharterStore } from '../store/charterStore'
 import { BookingDraft, EMPTY_BOOKING } from '../types/charter'
 import { Colors } from '../constants/colors'
+import { bookingApi } from '../services/bookingApi'
 
 type Step = 'dates' | 'extras' | 'details' | 'confirm'
 
@@ -32,6 +33,7 @@ export default function BookingScreen() {
   const { id, checkIn } = useLocalSearchParams<{ id: string; checkIn?: string }>()
   const insets = useSafeAreaInsets()
 
+  const { getYachtById, createReservation, bookingLoading, bookingError, clearBooking, bookedWeeks } = useCharterStore()
   const yacht = getYachtById(id ?? '')
 
   const [step, setStep]       = useState<Step>('dates')
@@ -78,17 +80,75 @@ export default function BookingScreen() {
     else setStep(STEPS[idx - 1])
   }
 
-  const handleConfirm = () => {
-    Alert.alert(
-      '🎉 Booking Request Sent!',
-      `Your enquiry for ${yacht?.name} has been sent to the charter company. They will contact you within 24 hours to confirm availability and arrange payment.`,
-      [
-        {
-          text: 'Done',
-          onPress: () => router.replace('/(tabs)/charter'),
+  const handleConfirm = async () => {
+    if (!yacht) return
+
+    try {
+      // Step 1: Create a BM reservation option (holds the yacht)
+      const summary = await createReservation(draft)
+
+      // Step 2: Build the booking payload with fully validated fields.
+
+      const totalCents = Math.round(total * 100)
+
+      // Convert date-only strings ("2024-06-01") to full ISO 8601 datetimes
+      // ("2024-06-01T00:00:00.000Z"). Zod's z.string().datetime() rejects
+      // date-only format — this normalisation is required.
+      const dateFrom = new Date(draft.startDate!).toISOString()
+      const dateTo   = new Date(draft.endDate!).toISOString()
+
+      // Normalise expiresAt the same way regardless of what BM returns.
+      const expiresAt = summary.expiresAt
+        ? new Date(summary.expiresAt).toISOString()
+        : new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+
+      // charterCompanyId is sent as-is (BM numeric string or our UUID).
+      // The backend resolves it via resolveCharterCompany(). In dev/mock mode
+      // it falls back to the seeded dev company when nothing matches.
+      // An empty string signals "use dev default" to the service.
+      const charterCompanyId = yacht.charterCompanyId ?? ''
+      const payload = {
+        yachtId:          yacht.id,
+        yachtName:        yacht.name,
+        charterCompanyId,
+        dateFrom,
+        dateTo,
+        guests:           draft.guests,
+        currency:         'eur',
+        totalCents,
+        expiresAt,
+        bmReservationId:  String(summary.reservationId),
+        bmReservationCode: summary.reservationCode,
+      }
+
+      if (__DEV__) {
+        console.log('[BookingScreen] POST /api/bookings payload:', JSON.stringify(payload, null, 2))
+      }
+
+      const bookingResult = await bookingApi.create(payload)
+
+      // Step 3: Navigate to payment screen with client_secret
+      clearBooking()
+      router.replace({
+        pathname: '/booking-payment',
+        params: {
+          clientSecret: bookingResult.clientSecret,
+          bookingId: bookingResult.bookingId,
+          bookingReference: bookingResult.bookingReference,
+          yachtName: yacht.name,
+          dateFrom: draft.startDate!,
+          dateTo: draft.endDate!,
+          totalCents: String(bookingResult.totalCents),
+          currency: bookingResult.currency,
         },
-      ],
-    )
+      })
+    } catch (err: any) {
+      Alert.alert(
+        'Booking Failed',
+        err.message ?? 'Something went wrong. Please try again.',
+        [{ text: 'OK' }],
+      )
+    }
   }
 
   const update = <K extends keyof BookingDraft>(key: K, val: BookingDraft[K]) => {
@@ -214,7 +274,7 @@ export default function BookingScreen() {
             <View style={styles.field}>
               <Text style={styles.fieldLabel}>Select Week</Text>
               <AvailabilityCalendar
-                bookedWeeks={yacht.bookedWeeks}
+                bookedWeeks={bookedWeeks[yacht.id] ?? yacht.bookedWeeks}
                 selectedCheckIn={draft.startDate}
                 onSelectWeek={(checkIn, checkOut) => {
                   update('startDate', checkIn)
@@ -441,9 +501,20 @@ export default function BookingScreen() {
             <Ionicons name="arrow-forward" size={16} color="#fff" />
           </TouchableOpacity>
         ) : (
-          <TouchableOpacity style={styles.confirmBtn} onPress={handleConfirm} activeOpacity={0.85}>
-            <Ionicons name="send-outline" size={18} color="#fff" />
-            <Text style={styles.confirmBtnText}>Send Booking Request</Text>
+          <TouchableOpacity
+            style={[styles.confirmBtn, bookingLoading && { opacity: 0.7 }]}
+            onPress={handleConfirm}
+            activeOpacity={0.85}
+            disabled={bookingLoading}
+          >
+            {bookingLoading ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Ionicons name="send-outline" size={18} color="#fff" />
+            )}
+            <Text style={styles.confirmBtnText}>
+              {bookingLoading ? 'Processing…' : 'Send Booking Request'}
+            </Text>
           </TouchableOpacity>
         )}
       </View>

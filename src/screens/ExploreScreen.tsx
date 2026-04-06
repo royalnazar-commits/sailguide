@@ -3,7 +3,7 @@ import {
   View, Text, TouchableOpacity, StyleSheet,
   ScrollView, Platform, TextInput, FlatList,
   Keyboard, Modal, KeyboardAvoidingView, Image,
-  Alert,
+  Alert, Animated,
 } from 'react-native'
 import MapView, { Marker, Region } from 'react-native-maps'
 import Supercluster from 'supercluster'
@@ -25,9 +25,14 @@ import { usePlacesStore } from '../store/placesStore'
 import { useAuthStore } from '../store/authStore'
 import { useRouteBuilderStore } from '../store/routeBuilderStore'
 import { useConditionsStore, SEVERITY_META } from '../store/conditionsStore'
-import { PlaceMarker } from '../components/PlaceMarker'
+import { PlaceMarker, MARKER_ANCHOR } from '../components/PlaceMarker'
 import { PlacePopup } from '../components/PlacePopup'
+import { SignalMarker } from '../components/SignalMarker'
+import { SignalCard } from '../components/SignalCard'
+import { CreateSignalModal } from '../components/CreateSignalModal'
 import { Colors } from '../constants/colors'
+import { Signal, subscribeToActiveSignals, findUserSignal } from '../lib/signalService'
+import { setSharedMapRegion } from '../utils/sharedMapRegion'
 
 // Filter + quick-add config imported from central registry
 
@@ -37,6 +42,19 @@ const SEARCH_TOP  = Platform.OS === 'ios' ? 56  : 36
 const FILTER_TOP  = SEARCH_TOP  + 52
 const COUNT_TOP   = FILTER_TOP  + 46
 
+// ── Place type emoji map (for add-place chips) ───────────────────────────────
+
+const CHIP_EMOJI: Partial<Record<CanonicalPlaceType, string>> = {
+  ANCHORAGE:  '⚓',
+  BAY:        '🌊',
+  LAGOON:     '🏞️',
+  BEACH:      '🏖️',
+  SNORKELING: '🤿',
+  MARINA:     '⛵',
+  CAVE:       '🕳️',
+  POI:        '📍',
+}
+
 // ── Initial map region ──────────────────────────────────────────────────────
 
 const INITIAL_REGION: Region = {
@@ -45,6 +63,15 @@ const INITIAL_REGION: Region = {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
+
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371
+  const dLat = (lat2 - lat1) * Math.PI / 180
+  const dLng = (lng2 - lng1) * Math.PI / 180
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+}
 
 function rankResults(places: Place[], query: string): Place[] {
   const q = query.toLowerCase().trim()
@@ -85,6 +112,21 @@ export default function ExploreScreen() {
   const [quickDesc,      setQuickDesc]      = useState('')
   const [quickPhotos,    setQuickPhotos]    = useState<string[]>([])
 
+  // ── Add-place mode state ──────────────────────────────────────────────────
+  /** True while user is panning the map to pick a location for a new place */
+  const [addPlaceMode, setAddPlaceMode] = useState(false)
+
+  // ── Signal state ──────────────────────────────────────────────────────────
+  const [signals,          setSignals]          = useState<Signal[]>([])
+  const [selectedSignal,   setSelectedSignal]   = useState<Signal | null>(null)
+  const [signalMode,       setSignalMode]        = useState(false)
+  const [signalCoord,      setSignalCoord]       = useState<{ lat: number; lng: number } | null>(null)
+  const [createSignalOpen, setCreateSignalOpen]  = useState(false)
+  const [userLocation,     setUserLocation]      = useState<{ lat: number; lng: number } | null>(null)
+  const [toastVisible,     setToastVisible]      = useState(false)
+  const signalToastAnim = useRef(new Animated.Value(0)).current
+  const [mapType, setMapType] = useState<'standard' | 'satellite'>('standard')
+
   // ── Reposition mode state ─────────────────────────────────────────────────
   /** The place currently being repositioned (drag mode active) */
   const [repositioningPlace, setRepositioningPlace] = useState<Place | null>(null)
@@ -92,6 +134,22 @@ export default function ExploreScreen() {
   const [repositionCoord, setRepositionCoord] = useState<{ lat: number; lng: number } | null>(null)
 
   const { userPlaces, addPlace, repositionPlace, localUserId } = usePlacesStore()
+
+  // Subscribe to live signals on mount
+  React.useEffect(() => {
+    const unsub = subscribeToActiveSignals(setSignals)
+    return unsub
+  }, [])
+
+  // Silently fetch user location once for nearby filter (no prompt if not granted)
+  React.useEffect(() => {
+    Location.getForegroundPermissionsAsync().then(({ status }) => {
+      if (status !== 'granted') return
+      Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Low })
+        .then((loc) => setUserLocation({ lat: loc.coords.latitude, lng: loc.coords.longitude }))
+        .catch(() => {})
+    })
+  }, [])
   const authUser = useAuthStore((s) => s.user)
   const { draftRoute, startNewRoute }    = useRouteBuilderStore()
   const { getActiveReportsForPlace, getHighestSeverityForPlace } = useConditionsStore()
@@ -119,7 +177,7 @@ export default function ExploreScreen() {
   const [region, setRegion] = useState<Region>(INITIAL_REGION)
 
   const clusterIndex = useMemo(() => {
-    const index = new Supercluster<{ placeId: string }>({ radius: 50, maxZoom: 14 })
+    const index = new Supercluster<{ placeId: string }>({ radius: 50, maxZoom: 7 })
     index.load(
       visiblePlaces.map((p) => ({
         type: 'Feature' as const,
@@ -142,23 +200,57 @@ export default function ExploreScreen() {
     return clusterIndex.getClusters(bbox, zoom)
   }, [clusterIndex, region])
 
+  // ── Nearby filter disabled — show all signals ─────────────────────────────
+  const nearbySignals = signals
+
+  // ── Signal clustering ─────────────────────────────────────────────────────
+  const signalClusterIndex = useMemo(() => {
+    const index = new Supercluster<{ signalId: string }>({ radius: 60, maxZoom: 10 })
+    index.load(
+      nearbySignals.map((s) => ({
+        type: 'Feature' as const,
+        geometry: { type: 'Point' as const, coordinates: [s.lng, s.lat] },
+        properties: { signalId: s.id },
+      }))
+    )
+    return index
+  }, [nearbySignals])
+
+  const signalClusters = useMemo(() => {
+    const { latitude, longitude, latitudeDelta, longitudeDelta } = region
+    const zoom = Math.min(20, Math.max(0, Math.round(Math.log2(360 / latitudeDelta))))
+    const bbox: [number, number, number, number] = [
+      longitude - longitudeDelta / 2,
+      latitude  - latitudeDelta  / 2,
+      longitude + longitudeDelta / 2,
+      latitude  + latitudeDelta  / 2,
+    ]
+    return signalClusterIndex.getClusters(bbox, zoom)
+  }, [signalClusterIndex, region])
+
   // ── Actions ───────────────────────────────────────────────────────────────
 
   const flyToPlace = useCallback((place: Place) => {
+    // Zoom to a city-region scale and offset the center slightly south of the
+    // place so the teardrop tip appears in the upper portion of the screen,
+    // comfortably above the bottom popup.
+    const delta = 0.38
     mapRef.current?.animateToRegion(
-      { latitude: place.lat - 1.2, longitude: place.lng, latitudeDelta: 4, longitudeDelta: 5 },
-      380,
+      { latitude: place.lat + delta * 0.13, longitude: place.lng, latitudeDelta: delta, longitudeDelta: delta * 1.3 },
+      420,
     )
   }, [])
 
   const handleMarkerPress = useCallback((place: Place) => {
     if (repositioningPlace) return    // ignore taps while dragging
     setSelectedPlace(place)
-    // Pan so the marker appears above the bottom popup, preserving current zoom
+    // Pan so the teardrop tip (the coordinate) appears in the upper ~35% of screen,
+    // well above the bottom-anchored popup. Shift center NORTH of place so place
+    // appears below center = higher on screen, further from the popup.
     const { latitudeDelta, longitudeDelta } = currentRegionRef.current
     mapRef.current?.animateToRegion(
       {
-        latitude: place.lat + latitudeDelta * 0.18,
+        latitude:  place.lat + latitudeDelta * 0.13,
         longitude: place.lng,
         latitudeDelta,
         longitudeDelta,
@@ -188,7 +280,8 @@ export default function ExploreScreen() {
 
   const handleMapPress = () => {
     if (isSearching) { handleDismissSearch(); return }
-    if (selectedPlace) setSelectedPlace(null)
+    if (selectedPlace) { setSelectedPlace(null); return }
+    if (selectedSignal) { setSelectedSignal(null); return }
   }
 
   const handleBuildRoute = () => {
@@ -196,15 +289,35 @@ export default function ExploreScreen() {
     router.push('/route-builder')
   }
 
-  const handleLongPress = useCallback((e: any) => {
-    if (repositioningPlace) return   // no new-place sheet while dragging
-    const { latitude, longitude } = e.nativeEvent.coordinate
-    setLongPressCoord({ lat: latitude, lng: longitude })
+  const openAddPlaceAt = useCallback((lat: number, lng: number) => {
+    setLongPressCoord({ lat, lng })
     setQuickName('')
     setQuickType('ANCHORAGE')
     setQuickDesc('')
     setQuickPhotos([])
-  }, [repositioningPlace])
+  }, [])
+
+  const handleConfirmAddPlaceMode = useCallback(() => {
+    const { latitude, longitude } = currentRegionRef.current
+    setAddPlaceMode(false)
+    openAddPlaceAt(latitude, longitude)
+  }, [openAddPlaceAt])
+
+  const handleConfirmSignalMode = useCallback(() => {
+    const { latitude, longitude } = currentRegionRef.current
+    setSignalMode(false)
+    setSignalCoord({ lat: latitude, lng: longitude })
+    setCreateSignalOpen(true)
+  }, [])
+
+  const showSignalToast = useCallback(() => {
+    setToastVisible(true)
+    Animated.sequence([
+      Animated.timing(signalToastAnim, { toValue: 1, duration: 280, useNativeDriver: true }),
+      Animated.delay(2200),
+      Animated.timing(signalToastAnim, { toValue: 0, duration: 280, useNativeDriver: true }),
+    ]).start(() => setToastVisible(false))
+  }, [signalToastAnim])
 
   // ── Photo picker ──────────────────────────────────────────────────────────
 
@@ -302,6 +415,8 @@ export default function ExploreScreen() {
   // ── Render ────────────────────────────────────────────────────────────────
 
   const isRepositioning = !!repositioningPlace
+  const isAddingPlace   = addPlaceMode
+  const isSignalMode    = signalMode
 
   return (
     <View style={styles.container}>
@@ -311,13 +426,12 @@ export default function ExploreScreen() {
         ref={mapRef}
         style={StyleSheet.absoluteFillObject}
         initialRegion={INITIAL_REGION}
-        onRegionChangeComplete={(r) => { currentRegionRef.current = r; setRegion(r) }}
+        onRegionChangeComplete={(r) => { currentRegionRef.current = r; setRegion(r); setSharedMapRegion(r) }}
         onPress={handleMapPress}
-        onLongPress={handleLongPress}
         showsUserLocation
         showsCompass={false}
         showsScale={false}
-        mapType="standard"
+        mapType={mapType}
       >
         {/* During reposition mode skip clustering — show all individual markers */}
         {repositioningPlace
@@ -338,7 +452,7 @@ export default function ExploreScreen() {
                       })
                     : undefined}
                   tracksViewChanges={isBeingRepositioned}
-                  anchor={{ x: 0.5, y: 0.5 }}
+                  anchor={MARKER_ANCHOR}
                 >
                   <PlaceMarker type={place.type} selected={isBeingRepositioned} isPremium={place.isPremium} />
                 </Marker>
@@ -379,13 +493,75 @@ export default function ExploreScreen() {
                   coordinate={{ latitude: lat, longitude: lng }}
                   onPress={() => handleMarkerPress(place)}
                   tracksViewChanges={selectedPlace?.id === place.id}
-                  anchor={{ x: 0.5, y: 0.5 }}
+                  anchor={MARKER_ANCHOR}
                 >
                   <PlaceMarker type={place.type} selected={selectedPlace?.id === place.id} isPremium={place.isPremium} />
                 </Marker>
               )
             })
         }
+        {/* ── Selected signal: pinned outside cluster loop so it can never
+              be removed by bbox recalculation or tracksViewChanges transitions */}
+        {selectedSignal && (
+          <Marker
+            key={`sig-pinned-${selectedSignal.id}`}
+            coordinate={{ latitude: selectedSignal.lat, longitude: selectedSignal.lng }}
+            anchor={{ x: 0.5, y: 0.5 }}
+            tracksViewChanges={false}
+            onPress={() => {
+              setSelectedPlace(null)
+              setSelectedSignal(selectedSignal)
+            }}
+          >
+            <SignalMarker signal={selectedSignal} selected={true} />
+          </Marker>
+        )}
+
+        {/* ── Signal markers (clustered layer) — skip selected to avoid duplicate */}
+        {signalClusters.map((cluster) => {
+          const [lng, lat] = cluster.geometry.coordinates
+          const props = cluster.properties as any
+
+          if (props.cluster) {
+            return (
+              <Marker
+                key={`signal-cluster-${cluster.id}`}
+                coordinate={{ latitude: lat, longitude: lng }}
+                anchor={{ x: 0.5, y: 0.5 }}
+                tracksViewChanges={false}
+                onPress={() => {
+                  const expansion = signalClusterIndex.getClusterExpansionZoom(cluster.id as number)
+                  const newDelta = 360 / Math.pow(2, expansion)
+                  mapRef.current?.animateToRegion(
+                    { latitude: lat, longitude: lng, latitudeDelta: newDelta, longitudeDelta: newDelta },
+                    350,
+                  )
+                }}
+              >
+                <SignalClusterBubble count={props.point_count} />
+              </Marker>
+            )
+          }
+
+          const signal = nearbySignals.find((s) => s.id === props.signalId)
+          if (!signal) return null
+          // Already rendered by the pinned marker above
+          if (selectedSignal?.id === signal.id) return null
+          return (
+            <Marker
+              key={signal.id}
+              coordinate={{ latitude: lat, longitude: lng }}
+              anchor={{ x: 0.5, y: 0.5 }}
+              tracksViewChanges={false}
+              onPress={() => {
+                setSelectedPlace(null)
+                setSelectedSignal(signal)
+              }}
+            >
+              <SignalMarker signal={signal} selected={false} />
+            </Marker>
+          )
+        })}
       </MapView>
 
       {/* ── Search bar (hidden while repositioning) ──────────────────────── */}
@@ -509,23 +685,52 @@ export default function ExploreScreen() {
         </View>
       )}
 
-      {/* ── Place count pill ─────────────────────────────────────────────── */}
-      {!isSearching && !isRepositioning && (
-        <View style={styles.countPill} pointerEvents="none">
-          <Text style={styles.countText}>
-            {visiblePlaces.length} place{visiblePlaces.length !== 1 ? 's' : ''}
-          </Text>
+      {/* ── Map type toggle pill ──────────────────────────────────────────── */}
+      {!isSearching && !isRepositioning && !isAddingPlace && !isSignalMode && (
+        <View style={styles.mapTypePill} pointerEvents="box-none">
+          <TouchableOpacity
+            style={[styles.mapTypeBtn, mapType === 'standard' && styles.mapTypeBtnActive]}
+            onPress={() => setMapType('standard')}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.mapTypeText, mapType === 'standard' && styles.mapTypeTextActive]}>Map</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.mapTypeBtn, mapType === 'satellite' && styles.mapTypeBtnActive]}
+            onPress={() => setMapType('satellite')}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.mapTypeText, mapType === 'satellite' && styles.mapTypeTextActive]}>Satellite</Text>
+          </TouchableOpacity>
         </View>
       )}
 
       {/* ── Bottom controls ──────────────────────────────────────────────── */}
-      {!isSearching && !isRepositioning && (
+      {!isSearching && !isRepositioning && !isAddingPlace && !isSignalMode && (
         <>
           <TouchableOpacity style={styles.buildRouteBtn} onPress={handleBuildRoute} activeOpacity={0.85}>
             <Ionicons name="git-branch-outline" size={16} color="#fff" />
             <Text style={styles.buildRouteBtnText}>
               {draftRoute ? 'Continue Route' : 'Build Route'}
             </Text>
+          </TouchableOpacity>
+
+          {/* Signal FAB */}
+          <TouchableOpacity
+            style={styles.signalFab}
+            onPress={() => setSignalMode(true)}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="radio-outline" size={20} color="#fff" />
+          </TouchableOpacity>
+
+          {/* Add Place FAB */}
+          <TouchableOpacity
+            style={styles.addPlaceFab}
+            onPress={() => setAddPlaceMode(true)}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="add" size={26} color="#fff" />
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -540,6 +745,92 @@ export default function ExploreScreen() {
             />
           </TouchableOpacity>
         </>
+      )}
+
+      {/* ── Add-place mode: crosshair + confirm banner ────────────────────── */}
+      {isAddingPlace && (
+        <>
+          {/* Crosshair centered on screen */}
+          <View style={styles.crosshairWrap} pointerEvents="none">
+            <View style={styles.crosshairH} />
+            <View style={styles.crosshairV} />
+            <View style={styles.crosshairRing} />
+            <View style={styles.crosshairDot} />
+          </View>
+
+          {/* Instruction + confirm banner */}
+          <View style={styles.addPlaceBanner}>
+            <View style={styles.addPlaceBannerTop}>
+              <Ionicons name="location-outline" size={18} color={Colors.primary} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.addPlaceBannerTitle}>Move the map to place your pin</Text>
+                <Text style={styles.addPlaceBannerSub}>The crosshair marks the exact location</Text>
+              </View>
+            </View>
+            <View style={styles.addPlaceBannerActions}>
+              <TouchableOpacity style={styles.addPlaceCancel} onPress={() => setAddPlaceMode(false)}>
+                <Text style={styles.addPlaceCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.addPlaceConfirm} onPress={handleConfirmAddPlaceMode} activeOpacity={0.85}>
+                <Ionicons name="checkmark" size={18} color="#fff" />
+                <Text style={styles.addPlaceConfirmText}>Set Location</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </>
+      )}
+
+      {/* ── Signal mode: crosshair + confirm banner ──────────────────────── */}
+      {isSignalMode && (
+        <>
+          <View style={styles.crosshairWrap} pointerEvents="none">
+            <View style={styles.crosshairH} />
+            <View style={styles.crosshairV} />
+            <View style={styles.crosshairRing} />
+            <View style={styles.crosshairDot} />
+          </View>
+          <View style={styles.addPlaceBanner}>
+            <View style={styles.addPlaceBannerTop}>
+              <Ionicons name="radio-outline" size={18} color={Colors.primary} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.addPlaceBannerTitle}>Move the map to place your signal</Text>
+                <Text style={styles.addPlaceBannerSub}>Signal expires automatically in 24h</Text>
+              </View>
+            </View>
+            <View style={styles.addPlaceBannerActions}>
+              <TouchableOpacity style={styles.addPlaceCancel} onPress={() => setSignalMode(false)}>
+                <Text style={styles.addPlaceCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.addPlaceConfirm} onPress={handleConfirmSignalMode} activeOpacity={0.85}>
+                <Ionicons name="checkmark" size={18} color="#fff" />
+                <Text style={styles.addPlaceConfirmText}>Set Location</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </>
+      )}
+
+      {/* ── Signal card ───────────────────────────────────────────────────── */}
+      {selectedSignal && !isSearching && !isRepositioning && (
+        <SignalCard
+          signal={selectedSignal}
+          currentUserId={currentUserId}
+          onClose={() => setSelectedSignal(null)}
+        />
+      )}
+
+      {/* ── Create signal modal ───────────────────────────────────────────── */}
+      {signalCoord && (
+        <CreateSignalModal
+          visible={createSignalOpen}
+          lat={signalCoord.lat}
+          lng={signalCoord.lng}
+          userId={currentUserId}
+          userName={authUser?.name ?? 'Sailor'}
+          existingSignal={findUserSignal(signals, currentUserId)}
+          onClose={() => { setCreateSignalOpen(false); setSignalCoord(null) }}
+          onPosted={() => { setCreateSignalOpen(false); setSignalCoord(null); showSignalToast() }}
+        />
       )}
 
       {/* ── Place popup ─────────────────────────────────────────────────── */}
@@ -571,6 +862,24 @@ export default function ExploreScreen() {
             </TouchableOpacity>
           </View>
         </View>
+      )}
+
+      {/* ── Signal posted toast ─────────────────────────────────────────── */}
+      {toastVisible && (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.signalToast,
+            {
+              opacity: signalToastAnim,
+              transform: [{
+                translateY: signalToastAnim.interpolate({ inputRange: [0, 1], outputRange: [30, 0] }),
+              }],
+            },
+          ]}
+        >
+          <Text style={styles.signalToastText}>Your signal is live 🔥</Text>
+        </Animated.View>
       )}
 
       {/* ── Long-press add place modal ───────────────────────────────────── */}
@@ -627,12 +936,14 @@ export default function ExploreScreen() {
               >
                 {PLACE_TYPE_QUICK.map(({ type, label, color }) => {
                   const active = quickType === type
+                  const emoji  = CHIP_EMOJI[type]
                   return (
                     <TouchableOpacity
                       key={type}
                       style={[styles.quickTypeChip, active && { backgroundColor: color, borderColor: color }]}
                       onPress={() => setQuickType(type)}
                     >
+                      {emoji ? <Text style={styles.quickTypeEmoji}>{emoji}</Text> : null}
                       <Text style={[styles.quickTypeText, active && styles.quickTypeTextActive]}>{label}</Text>
                     </TouchableOpacity>
                   )
@@ -711,17 +1022,48 @@ export default function ExploreScreen() {
 // ── Cluster bubble component ──────────────────────────────────────────────────
 
 function ClusterBubble({ count }: { count: number }) {
-  const size = count < 10 ? 32 : count < 100 ? 38 : 44
+  const size     = count < 10 ? 34 : count < 50 ? 40 : 46
+  const ringSize = size + 12
   return (
-    <View style={[clusterStyles.bubble, { width: size, height: size, borderRadius: size / 2 }]}>
-      <Text style={clusterStyles.count}>{count}</Text>
+    <View style={{ width: ringSize, height: ringSize, alignItems: 'center', justifyContent: 'center' }}>
+      <View style={[clusterStyles.ring, { width: ringSize, height: ringSize, borderRadius: ringSize / 2 }]} />
+      <View style={[clusterStyles.bubble, { width: size, height: size, borderRadius: size / 2, position: 'absolute' }]}>
+        <Text style={clusterStyles.count}>{count < 100 ? count : '99+'}</Text>
+      </View>
     </View>
   )
 }
 
-const clusterStyles = StyleSheet.create({
+// ── Signal cluster bubble component ──────────────────────────────────────────
+
+function SignalClusterBubble({ count }: { count: number }) {
+  const size = count <= 5 ? 42 : 48
+  const hasGlow = count >= 6
+  return (
+    <View style={{ alignItems: 'center', justifyContent: 'center' }}>
+      {hasGlow && (
+        <View style={[
+          signalClusterStyles.glow,
+          { width: size + 18, height: size + 18, borderRadius: (size + 18) / 2 },
+        ]} />
+      )}
+      <View style={[signalClusterStyles.bubble, { width: size, height: size, borderRadius: size / 2 }]}>
+        <Text style={signalClusterStyles.emoji}>👥</Text>
+        <Text style={signalClusterStyles.count}>{count}</Text>
+      </View>
+    </View>
+  )
+}
+
+const signalClusterStyles = StyleSheet.create({
+  glow: {
+    position: 'absolute',
+    backgroundColor: '#3B82F620',
+    borderWidth: 1.5,
+    borderColor: '#3B82F640',
+  },
   bubble: {
-    backgroundColor: Colors.primary,
+    backgroundColor: '#3B82F6',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
@@ -732,10 +1074,34 @@ const clusterStyles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 5,
   },
+  emoji: { fontSize: 10, lineHeight: 13 },
+  count: { color: '#fff', fontSize: 11, fontWeight: '700', lineHeight: 13 },
+})
+
+const clusterStyles = StyleSheet.create({
+  ring: {
+    position: 'absolute',
+    backgroundColor: Colors.primary + '1A',
+    borderWidth: 1.5,
+    borderColor: Colors.primary + '30',
+  },
+  bubble: {
+    backgroundColor: Colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#fff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.28,
+    shadowRadius: 5,
+    elevation: 6,
+  },
   count: {
     color: '#fff',
     fontSize: 13,
-    fontWeight: '700',
+    fontWeight: '800',
+    letterSpacing: -0.3,
   },
 })
 
@@ -854,19 +1220,38 @@ const styles = StyleSheet.create({
   resultsHintTitle: { fontSize: 16, fontWeight: '700', color: Colors.text },
   resultsHintSub: { fontSize: 13, color: Colors.textMuted, textAlign: 'center', lineHeight: 20 },
 
-  // Count pill
-  countPill: {
+  // Map type toggle pill
+  mapTypePill: {
     position: 'absolute',
     top: COUNT_TOP,
-    alignSelf: 'center',
-    backgroundColor: 'rgba(255,255,255,0.88)',
+    right: 14,
+    flexDirection: 'row',
+    backgroundColor: 'rgba(255,255,255,0.94)',
     borderRadius: 20,
-    paddingHorizontal: 12,
-    paddingVertical: 4,
     borderWidth: 1,
     borderColor: Colors.border,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
+    elevation: 3,
   },
-  countText: { fontSize: 12, color: Colors.textSecondary, fontWeight: '500' },
+  mapTypeBtn: {
+    paddingHorizontal: 13,
+    paddingVertical: 6,
+  },
+  mapTypeBtnActive: {
+    backgroundColor: Colors.primary,
+  },
+  mapTypeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+  },
+  mapTypeTextActive: {
+    color: '#fff',
+  },
 
   // Build Route button
   buildRouteBtn: {
@@ -887,6 +1272,148 @@ const styles = StyleSheet.create({
     elevation: 5,
   },
   buildRouteBtnText: { color: '#fff', fontSize: 14, fontWeight: '700' },
+
+  // Signal FAB (stacked above Add Place FAB)
+  signalFab: {
+    position: 'absolute',
+    bottom: 140,
+    right: 16,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#3B82F6',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.22,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+
+  // Add Place FAB
+  addPlaceFab: {
+    position: 'absolute',
+    bottom: 84,
+    right: 16,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: Colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.22,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+
+  // Add-place mode: crosshair
+  crosshairWrap: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  crosshairH: {
+    position: 'absolute',
+    width: 30,
+    height: 2,
+    backgroundColor: '#fff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.65,
+    shadowRadius: 3,
+    elevation: 4,
+  },
+  crosshairV: {
+    position: 'absolute',
+    width: 2,
+    height: 30,
+    backgroundColor: '#fff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.65,
+    shadowRadius: 3,
+    elevation: 4,
+  },
+  crosshairRing: {
+    position: 'absolute',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 1.5,
+    borderColor: '#fff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.5,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  crosshairDot: {
+    position: 'absolute',
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#fff',
+    borderWidth: 2.5,
+    borderColor: Colors.primary,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.7,
+    shadowRadius: 3,
+    elevation: 6,
+  },
+
+  // Add-place mode: confirm banner
+  addPlaceBanner: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    paddingBottom: Platform.OS === 'ios' ? 36 : 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 16,
+    elevation: 12,
+    gap: 14,
+  },
+  addPlaceBannerTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  addPlaceBannerTitle: { fontSize: 15, fontWeight: '700', color: Colors.text },
+  addPlaceBannerSub: { fontSize: 13, color: Colors.textMuted, marginTop: 2 },
+  addPlaceBannerActions: { flexDirection: 'row', gap: 10 },
+  addPlaceCancel: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 13,
+    borderRadius: 12,
+    backgroundColor: Colors.background,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  addPlaceCancelText: { fontSize: 15, fontWeight: '600', color: Colors.textSecondary },
+  addPlaceConfirm: {
+    flex: 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 13,
+    borderRadius: 12,
+    backgroundColor: Colors.primary,
+  },
+  addPlaceConfirmText: { fontSize: 15, fontWeight: '700', color: '#fff' },
 
   // Locate FAB
   locateBtn: {
@@ -1000,14 +1527,18 @@ const styles = StyleSheet.create({
   },
   quickTypes: { flexGrow: 0 },
   quickTypeChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
     borderRadius: 20,
-    paddingHorizontal: 14,
+    paddingHorizontal: 12,
     paddingVertical: 7,
     borderWidth: 1.5,
     borderColor: Colors.border,
     backgroundColor: Colors.background,
     marginRight: 8,
   },
+  quickTypeEmoji: { fontSize: 13 },
   quickTypeText: { fontSize: 13, fontWeight: '600', color: Colors.textSecondary },
   quickTypeTextActive: { color: '#fff' },
 
@@ -1063,4 +1594,21 @@ const styles = StyleSheet.create({
   },
   quickSaveDisabled: { opacity: 0.45 },
   quickSaveText: { fontSize: 15, fontWeight: '700', color: '#fff' },
+
+  // Signal posted toast
+  signalToast: {
+    position: 'absolute',
+    bottom: 110,
+    alignSelf: 'center',
+    backgroundColor: '#1E293B',
+    borderRadius: 24,
+    paddingHorizontal: 22,
+    paddingVertical: 13,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    elevation: 10,
+  },
+  signalToastText: { color: '#fff', fontSize: 14, fontWeight: '700' },
 })

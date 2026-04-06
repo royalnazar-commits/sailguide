@@ -9,10 +9,15 @@
  *
  * Solution: draw every icon as pure View / border shapes. No text, no fonts,
  * no external assets → always renders correctly on first paint.
+ *
+ * SHAPE:
+ * A teardrop pin — circular bubble on top + downward-pointing triangle at bottom.
+ * The triangle tip sits exactly on the geographic coordinate.
+ * Anchor must be set to MARKER_ANCHOR = { x: 0.5, y: 1.0 } on the Marker.
  */
 
 import React from 'react'
-import { View, Text, StyleSheet } from 'react-native'
+import { View, StyleSheet } from 'react-native'
 import {
   CanonicalPlaceType,
   CANONICAL_PLACE_TYPES,
@@ -20,20 +25,7 @@ import {
   normalizePlaceType,
 } from '../constants/placeTypes'
 
-// ── Emoji per place type (each type must be visually distinct) ────────────────
-const PLACE_EMOJI: Record<CanonicalPlaceType, string> = {
-  MARINA:     '⚓',
-  ANCHORAGE:  '⚓',
-  BAY:        '🌊',
-  POI:        '📍',
-  BEACH:      '🏖',
-  CAVE:       '🦇',
-  LAGOON:     '🏝',
-  SNORKELING: '🤿',
-}
-
 // ── Type config ───────────────────────────────────────────────────────────────
-// Derived from the central registry — single source of truth for colors.
 
 interface Config { color: string }
 
@@ -41,113 +33,70 @@ export const PLACE_CONFIG: Record<CanonicalPlaceType, Config> = Object.fromEntri
   CANONICAL_PLACE_TYPES.map((t) => [t, { color: getPlaceTypeMeta(t).color }]),
 ) as Record<CanonicalPlaceType, Config>
 
+/**
+ * Anchor for Marker when using PlaceMarker.
+ * y: 1.0 means the bottom of the rendered view (the teardrop tip) maps to
+ * the geographic coordinate — so the tip sits exactly on the location.
+ */
+export const MARKER_ANCHOR = { x: 0.5, y: 1.0 } as const
+
 // ── Inner icon components (pure Views, no fonts) ──────────────────────────────
 
 /**
  * Anchor shape for MARINA.
- * Anatomy: oval ring at top + vertical shaft + horizontal stock (crossbar).
- * The three elements together read unmistakably as ⚓ at any size ≥ 14px.
  */
 function AnchorIcon({ s }: { s: number }) {
-  const lw  = Math.max(1.5, s * 0.13)   // line weight
-  const rW  = s * 0.46                  // ring width
-  const rH  = s * 0.32                  // ring height
-  const rL  = (s - rW) / 2             // ring left
-  const shL = (s - lw) / 2             // shaft centre-x
-  const shT = rH * 0.6                  // shaft starts inside ring
-  const shH = s - shT                   // shaft height to bottom
-  const stL = s * 0.06                  // stock (crossbar) left edge
-  const stW = s - stL * 2              // stock width
-  const stT = shT + shH * 0.38        // stock vertical position
+  const lw  = Math.max(1.5, s * 0.13)
+  const rW  = s * 0.46
+  const rH  = s * 0.32
+  const rL  = (s - rW) / 2
+  const shL = (s - lw) / 2
+  const shT = rH * 0.6
+  const shH = s - shT
+  const stL = s * 0.06
+  const stW = s - stL * 2
+  const stT = shT + shH * 0.38
 
   return (
     <View style={{ width: s, height: s }}>
-      {/* Ring */}
-      <View style={{
-        position: 'absolute', left: rL, top: 0,
-        width: rW, height: rH,
-        borderRadius: rW / 2,
-        borderWidth: lw, borderColor: '#fff',
-      }} />
-      {/* Shaft */}
-      <View style={{
-        position: 'absolute', left: shL, top: shT,
-        width: lw, height: shH, backgroundColor: '#fff',
-      }} />
-      {/* Stock (crossbar) */}
-      <View style={{
-        position: 'absolute', left: stL, top: stT,
-        width: stW, height: lw, backgroundColor: '#fff',
-        borderRadius: lw / 2,
-      }} />
+      <View style={{ position: 'absolute', left: rL, top: 0, width: rW, height: rH, borderRadius: rW / 2, borderWidth: lw, borderColor: '#fff' }} />
+      <View style={{ position: 'absolute', left: shL, top: shT, width: lw, height: shH, backgroundColor: '#fff' }} />
+      <View style={{ position: 'absolute', left: stL, top: stT, width: stW, height: lw, backgroundColor: '#fff', borderRadius: lw / 2 }} />
     </View>
   )
 }
 
 /**
- * Anchor with chain dot for ANCHORAGE.
- * Same anchor but slightly trimmer stock + a small filled circle at the
- * bottom of the shaft — suggests a chain end / seafloor contact.
- * The colour difference (green vs navy) makes marina vs anchorage distinct.
+ * Mooring buoy for ANCHORAGE.
  */
 function AnchorageIcon({ s }: { s: number }) {
-  const lw  = Math.max(1.5, s * 0.13)
-  const rW  = s * 0.42
-  const rH  = s * 0.30
-  const rL  = (s - rW) / 2
-  const shL = (s - lw) / 2
-  const shT = rH * 0.55
-  const shH = s * 0.62
-  const stL = s * 0.12
-  const stW = s - stL * 2
-  const stT = shT + shH * 0.40
-  const dotR = lw * 1.6              // small dot at base of shaft
-  const dotL = (s - dotR * 2) / 2
-  const dotT = shT + shH - dotR
+  const lw      = Math.max(1.5, s * 0.12)
+  const floatR  = s * 0.18
+  const cx      = s / 2
+  const floatT  = s * 0.10
+  const lineTop = floatT + floatR * 2
+  const lineH   = s * 0.40
+  const baseW   = s * 0.56
 
   return (
     <View style={{ width: s, height: s }}>
-      {/* Ring */}
-      <View style={{
-        position: 'absolute', left: rL, top: 0,
-        width: rW, height: rH,
-        borderRadius: rW / 2,
-        borderWidth: lw, borderColor: '#fff',
-      }} />
-      {/* Shaft */}
-      <View style={{
-        position: 'absolute', left: shL, top: shT,
-        width: lw, height: shH, backgroundColor: '#fff',
-      }} />
-      {/* Stock */}
-      <View style={{
-        position: 'absolute', left: stL, top: stT,
-        width: stW, height: lw, backgroundColor: '#fff',
-        borderRadius: lw / 2,
-      }} />
-      {/* Chain dot */}
-      <View style={{
-        position: 'absolute', left: dotL, top: dotT,
-        width: dotR * 2, height: dotR * 2,
-        borderRadius: dotR, backgroundColor: '#fff',
-      }} />
+      <View style={{ position: 'absolute', left: cx - floatR, top: floatT, width: floatR * 2, height: floatR * 2, borderRadius: floatR, backgroundColor: '#fff' }} />
+      <View style={{ position: 'absolute', left: cx - lw / 2, top: lineTop, width: lw, height: lineH, backgroundColor: '#fff' }} />
+      <View style={{ position: 'absolute', left: cx - baseW / 2, top: lineTop + lineH, width: baseW, height: lw, backgroundColor: '#fff', borderRadius: lw / 2 }} />
     </View>
   )
 }
 
 /**
  * Three wave arcs for BAY.
- * Each arc is a rectangle with rounded top corners only — drawn with
- * borderTopWidth + borderLeftWidth + borderRightWidth (no borderBottomWidth).
- * Three side-by-side arcs read as ≈ / water waves on any screen size.
  */
 function WaveIcon({ s }: { s: number }) {
   const lw   = Math.max(1.5, s * 0.13)
-  const n    = 3                          // number of arcs
-  const bW   = s * 0.24                  // arc width
-  const bH   = s * 0.52                  // arc height
-  const gap  = (s - n * bW) / (n + 1)   // spacing between arcs
-  const topY = (s - bH) / 2 - lw * 0.5 // vertical centre
+  const n    = 3
+  const bW   = s * 0.24
+  const bH   = s * 0.52
+  const gap  = (s - n * bW) / (n + 1)
+  const topY = (s - bH) / 2 - lw * 0.5
 
   return (
     <View style={{ width: s, height: s }}>
@@ -155,18 +104,11 @@ function WaveIcon({ s }: { s: number }) {
         <View
           key={i}
           style={{
-            position: 'absolute',
-            left:  gap + i * (bW + gap),
-            top:   topY,
-            width: bW,
-            height: bH,
-            borderTopLeftRadius:  bW / 2,
-            borderTopRightRadius: bW / 2,
-            borderTopWidth:   lw,
-            borderLeftWidth:  lw,
-            borderRightWidth: lw,
-            borderBottomWidth: 0,
-            borderColor: '#fff',
+            position: 'absolute', left: gap + i * (bW + gap), top: topY,
+            width: bW, height: bH,
+            borderTopLeftRadius: bW / 2, borderTopRightRadius: bW / 2,
+            borderTopWidth: lw, borderLeftWidth: lw, borderRightWidth: lw,
+            borderBottomWidth: 0, borderColor: '#fff',
           }}
         />
       ))}
@@ -175,39 +117,26 @@ function WaveIcon({ s }: { s: number }) {
 }
 
 /**
- * Four-pointed star for POI.
- * Four slim rectangles radiating from the centre at 0°, 45°, 90°, 135°.
- * Reads as ✦ / ★ at any size ≥ 14px. No SVG needed.
+ * Flag icon for POI / landmark.
  */
-function StarIcon({ s }: { s: number }) {
-  const armW = s * 0.18            // arm thickness
-  const armH = s * 0.82            // arm length
-  const cx   = (s - armW) / 2     // arm left when horizontal
-  const cy   = (s - armH) / 2     // arm top when vertical
-  const br   = armW / 2            // border radius on arm ends
-
-  const arm = {
-    position: 'absolute' as const,
-    width: armW, height: armH,
-    backgroundColor: '#fff',
-    borderRadius: br,
-    left: cx, top: cy,
-  }
+function FlagIcon({ s }: { s: number }) {
+  const lw      = Math.max(1.5, s * 0.12)
+  const staffX  = s * 0.22
+  const flagW   = s * 0.55
+  const flagH   = s * 0.36
+  const flagTop = s * 0.10
+  const staffH  = s * 0.82
 
   return (
     <View style={{ width: s, height: s }}>
-      <View style={arm} />
-      <View style={[arm, { transform: [{ rotate: '90deg' }] }]} />
-      <View style={[arm, { transform: [{ rotate: '45deg' }] }]} />
-      <View style={[arm, { transform: [{ rotate: '-45deg' }] }]} />
+      <View style={{ position: 'absolute', left: staffX + lw, top: flagTop, width: flagW, height: flagH, backgroundColor: '#fff', borderRadius: 2 }} />
+      <View style={{ position: 'absolute', left: staffX, top: flagTop, width: lw, height: staffH, backgroundColor: '#fff', borderRadius: lw / 2 }} />
     </View>
   )
 }
 
 /**
  * Ring + centre dot for LAGOON.
- * An outer circle (shoreline) with a small filled circle inside reads unmistakably
- * as a bird's-eye view of an enclosed lagoon or lake.
  */
 function LagoonIcon({ s }: { s: number }) {
   const lw   = Math.max(1.5, s * 0.12)
@@ -218,26 +147,14 @@ function LagoonIcon({ s }: { s: number }) {
 
   return (
     <View style={{ width: s, height: s }}>
-      {/* Outer ring */}
-      <View style={{
-        position: 'absolute', left: cx - r, top: cy - r,
-        width: r * 2, height: r * 2, borderRadius: r,
-        borderWidth: lw, borderColor: '#fff',
-      }} />
-      {/* Centre dot (still water) */}
-      <View style={{
-        position: 'absolute', left: cx - dotR, top: cy - dotR,
-        width: dotR * 2, height: dotR * 2, borderRadius: dotR,
-        backgroundColor: '#fff',
-      }} />
+      <View style={{ position: 'absolute', left: cx - r, top: cy - r, width: r * 2, height: r * 2, borderRadius: r, borderWidth: lw, borderColor: '#fff' }} />
+      <View style={{ position: 'absolute', left: cx - dotR, top: cy - dotR, width: dotR * 2, height: dotR * 2, borderRadius: dotR, backgroundColor: '#fff' }} />
     </View>
   )
 }
 
 /**
  * Goggles icon for SNORKELING.
- * Two oval lenses connected by a bridge + side straps.
- * Reads instantly as a snorkel mask at any size ≥ 14px.
  */
 function SnorkelingIcon({ s }: { s: number }) {
   const lw      = Math.max(1.5, s * 0.12)
@@ -250,79 +167,44 @@ function SnorkelingIcon({ s }: { s: number }) {
 
   return (
     <View style={{ width: s, height: s }}>
-      {/* Left strap */}
-      <View style={{
-        position: 'absolute', left: leftOff, top: lensTop + lensH * 0.38,
-        width: strapW, height: lw, backgroundColor: '#fff',
-      }} />
-      {/* Left lens */}
-      <View style={{
-        position: 'absolute', left: leftOff + strapW, top: lensTop,
-        width: lensW, height: lensH, borderRadius: lensW * 0.42,
-        borderWidth: lw, borderColor: '#fff',
-      }} />
-      {/* Bridge */}
-      <View style={{
-        position: 'absolute', left: leftOff + strapW + lensW, top: lensTop + lensH * 0.38,
-        width: bridge, height: lw, backgroundColor: '#fff',
-      }} />
-      {/* Right lens */}
-      <View style={{
-        position: 'absolute', left: leftOff + strapW + lensW + bridge, top: lensTop,
-        width: lensW, height: lensH, borderRadius: lensW * 0.42,
-        borderWidth: lw, borderColor: '#fff',
-      }} />
-      {/* Right strap */}
-      <View style={{
-        position: 'absolute', left: leftOff + strapW + lensW + bridge + lensW,
-        top: lensTop + lensH * 0.38, width: strapW, height: lw, backgroundColor: '#fff',
-      }} />
+      <View style={{ position: 'absolute', left: leftOff, top: lensTop + lensH * 0.38, width: strapW, height: lw, backgroundColor: '#fff' }} />
+      <View style={{ position: 'absolute', left: leftOff + strapW, top: lensTop, width: lensW, height: lensH, borderRadius: lensW * 0.42, borderWidth: lw, borderColor: '#fff' }} />
+      <View style={{ position: 'absolute', left: leftOff + strapW + lensW, top: lensTop + lensH * 0.38, width: bridge, height: lw, backgroundColor: '#fff' }} />
+      <View style={{ position: 'absolute', left: leftOff + strapW + lensW + bridge, top: lensTop, width: lensW, height: lensH, borderRadius: lensW * 0.42, borderWidth: lw, borderColor: '#fff' }} />
+      <View style={{ position: 'absolute', left: leftOff + strapW + lensW + bridge + lensW, top: lensTop + lensH * 0.38, width: strapW, height: lw, backgroundColor: '#fff' }} />
     </View>
   )
 }
 
 /**
- * Sunrise icon for BEACH.
- * A filled circle (sun) above a horizon line with two small wave arcs below.
+ * Beach umbrella for BEACH.
  */
-function SunriseIcon({ s }: { s: number }) {
-  const lw = Math.max(1.5, s * 0.12)
-  const r  = s * 0.24
-  const cx = s / 2
-  const cy = s * 0.36
+function UmbrellaIcon({ s }: { s: number }) {
+  const lw      = Math.max(1.5, s * 0.12)
+  const canopyW = s * 0.76
+  const canopyH = s * 0.38
+  const canopyL = (s - canopyW) / 2
+  const canopyT = s * 0.14
+  const stickX  = s / 2 - lw / 2
+  const stickT  = canopyT + canopyH * 0.72
+  const stickH  = s * 0.54
 
   return (
     <View style={{ width: s, height: s }}>
-      {/* Sun disc */}
       <View style={{
-        position: 'absolute', left: cx - r, top: cy - r,
-        width: r * 2, height: r * 2, borderRadius: r,
-        backgroundColor: '#fff',
+        position: 'absolute', left: canopyL, top: canopyT,
+        width: canopyW, height: canopyH,
+        borderTopLeftRadius: canopyW / 2, borderTopRightRadius: canopyW / 2,
+        borderTopWidth: lw, borderLeftWidth: lw, borderRightWidth: lw,
+        borderBottomWidth: 0, borderColor: '#fff',
       }} />
-      {/* Horizon */}
-      <View style={{
-        position: 'absolute', left: s * 0.08, top: cy + r + lw,
-        width: s * 0.84, height: lw, backgroundColor: '#fff', borderRadius: lw / 2,
-      }} />
-      {/* Two wave arcs */}
-      {[0, 1].map((i) => (
-        <View key={i} style={{
-          position: 'absolute',
-          left: s * 0.09 + i * (s * 0.43),
-          top: cy + r + lw * 3,
-          width: s * 0.38, height: s * 0.20,
-          borderTopLeftRadius: s * 0.19, borderTopRightRadius: s * 0.19,
-          borderTopWidth: lw, borderLeftWidth: lw, borderRightWidth: lw, borderBottomWidth: 0,
-          borderColor: '#fff',
-        }} />
-      ))}
+      <View style={{ position: 'absolute', left: stickX, top: stickT, width: lw, height: stickH, backgroundColor: '#fff', borderRadius: lw / 2 }} />
     </View>
   )
 }
 
 /**
  * Cave arch icon for CAVE.
- * A rounded arch (cave entrance silhouette) with a ground line at the base.
  */
 function CaveIcon({ s }: { s: number }) {
   const lw    = Math.max(1.5, s * 0.13)
@@ -333,20 +215,14 @@ function CaveIcon({ s }: { s: number }) {
 
   return (
     <View style={{ width: s, height: s }}>
-      {/* Arch */}
       <View style={{
         position: 'absolute', left: archL, top: archT,
         width: archW, height: archH,
         borderTopLeftRadius: archW / 2, borderTopRightRadius: archW / 2,
-        borderTopWidth: lw, borderLeftWidth: lw, borderRightWidth: lw, borderBottomWidth: 0,
-        borderColor: '#fff',
+        borderTopWidth: lw, borderLeftWidth: lw, borderRightWidth: lw,
+        borderBottomWidth: 0, borderColor: '#fff',
       }} />
-      {/* Ground line */}
-      <View style={{
-        position: 'absolute', left: archL - lw, top: archT + archH,
-        width: archW + lw * 2, height: lw,
-        backgroundColor: '#fff', borderRadius: lw / 2,
-      }} />
+      <View style={{ position: 'absolute', left: archL - lw, top: archT + archH, width: archW + lw * 2, height: lw, backgroundColor: '#fff', borderRadius: lw / 2 }} />
     </View>
   )
 }
@@ -358,12 +234,12 @@ function PlaceIcon({ type, size }: { type: CanonicalPlaceType; size: number }) {
     case 'MARINA':     return <AnchorIcon      s={size} />
     case 'ANCHORAGE':  return <AnchorageIcon   s={size} />
     case 'BAY':        return <WaveIcon        s={size} />
-    case 'POI':        return <StarIcon        s={size} />
-    case 'BEACH':      return <SunriseIcon     s={size} />
+    case 'POI':        return <FlagIcon        s={size} />
+    case 'BEACH':      return <UmbrellaIcon    s={size} />
     case 'CAVE':       return <CaveIcon        s={size} />
     case 'LAGOON':     return <LagoonIcon      s={size} />
     case 'SNORKELING': return <SnorkelingIcon  s={size} />
-    default:           return <StarIcon        s={size} />
+    default:           return <FlagIcon        s={size} />
   }
 }
 
@@ -378,29 +254,53 @@ interface Props {
 }
 
 export function PlaceMarker({ type, selected = false, isPremium = false }: Props) {
-  const canonical  = normalizePlaceType(type)
-  const { color }  = PLACE_CONFIG[canonical]
-  const size       = selected ? 34 : 28
-  const iconSize   = selected ? 16 : 13
+  const canonical = normalizePlaceType(type)
+  const { color } = PLACE_CONFIG[canonical]
+
+  // Selected markers are larger and have a white border ring.
+  const BUBBLE = selected ? 38 : 30
+  const ICON   = selected ? 18 : 14
+  // Teardrop pointer dimensions
+  const PTR_W  = selected ? 8  : 6   // half-width of downward triangle
+  const PTR_H  = selected ? 11 : 9   // height of downward triangle
 
   return (
     <View style={styles.wrapper}>
+      {/* Circular bubble */}
       <View
         style={[
           styles.bubble,
           {
+            width:           BUBBLE,
+            height:          BUBBLE,
+            borderRadius:    BUBBLE / 2,
             backgroundColor: color,
-            width:            size,
-            height:           size,
-            borderRadius:     size / 2,
-            shadowOpacity:    selected ? 0.4 : 0.18,
-            shadowRadius:     selected ? 6 : 3,
-            transform:        [{ scale: selected ? 1.1 : 1 }],
+            borderWidth:     selected ? 2.5 : 0,
+            borderColor:     '#fff',
+            shadowOpacity:   selected ? 0.40 : 0.22,
+            shadowRadius:    selected ? 9    : 4,
+            elevation:       selected ? 8    : 5,
           },
         ]}
       >
-        <PlaceIcon type={canonical} size={iconSize} />
+        <PlaceIcon type={canonical} size={ICON} />
       </View>
+
+      {/* Teardrop pointer — downward-pointing triangle via zero-size borders */}
+      <View
+        style={{
+          width:            0,
+          height:           0,
+          borderLeftWidth:  PTR_W,
+          borderRightWidth: PTR_W,
+          borderTopWidth:   PTR_H,
+          borderLeftColor:  'transparent',
+          borderRightColor: 'transparent',
+          borderTopColor:   color,
+          marginTop:        -1,   // overlap 1px to avoid hairline gap
+        }}
+      />
+
       {isPremium && <LockBadge />}
     </View>
   )
@@ -408,24 +308,21 @@ export function PlaceMarker({ type, selected = false, isPremium = false }: Props
 
 /**
  * Lock-shaped badge for premium places.
- * Drawn with pure Views so it renders correctly as a map marker snapshot.
- * Shape: rounded rectangle body with a smaller U-shaped shackle on top.
  */
 function LockBadge() {
-  const S  = 13          // badge circle diameter
-  const bW = S * 0.42    // lock body width
-  const bH = S * 0.35    // lock body height
+  const S  = 13
+  const bW = S * 0.42
+  const bH = S * 0.35
   const bL = (S - bW) / 2
   const bT = S * 0.48
-  const lw = Math.max(1.2, S * 0.12)  // shackle line weight
-  const sW = bW * 0.55               // shackle inner width
-  const sH = S * 0.30                // shackle height
+  const lw = Math.max(1.2, S * 0.12)
+  const sW = bW * 0.55
+  const sH = S * 0.30
   const sL = (S - sW - lw * 2) / 2 + lw / 2
   const sT = bT - sH + lw * 0.5
 
   return (
     <View style={[styles.lockBadge, { width: S, height: S, borderRadius: S / 2 }]}>
-      {/* Shackle (U-arch) */}
       <View style={{
         position: 'absolute', left: sL, top: sT,
         width: sW, height: sH,
@@ -433,7 +330,6 @@ function LockBadge() {
         borderTopWidth: lw, borderLeftWidth: lw, borderRightWidth: lw, borderBottomWidth: 0,
         borderColor: '#fff',
       }} />
-      {/* Body */}
       <View style={{
         position: 'absolute', left: bL, top: bT,
         width: bW, height: bH,
@@ -446,7 +342,16 @@ function LockBadge() {
 // ── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  wrapper: { alignItems: 'center' },
+  wrapper: {
+    alignItems: 'center',
+    // No overflow: 'hidden' — the lock badge overflows intentionally
+  },
+  bubble: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+  },
   lockBadge: {
     position: 'absolute',
     top: -4,
@@ -457,12 +362,5 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 2,
     elevation: 3,
-  },
-  bubble: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 4,
   },
 })

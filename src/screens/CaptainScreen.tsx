@@ -10,6 +10,8 @@ import { useCaptainStore } from '../store/captainStore'
 import { useRouteBuilderStore } from '../store/routeBuilderStore'
 import { usePlacesStore } from '../store/placesStore'
 import { useAuthStore } from '../store/authStore'
+import { useSocialStore } from '../store/socialStore'
+import { useProfileStore } from '../store/profileStore'
 import { PurchaseModal } from '../components/PurchaseModal'
 import { Colors } from '../constants/colors'
 import { UserRoute } from '../types/userRoute'
@@ -34,6 +36,9 @@ export default function CaptainScreen() {
   } | null>(null)
 
   const viewerId = user?.id
+  const { isFollowing, followUser, unfollowUser } = useSocialStore()
+  const { savedRoutes: savedRouteIds, toggleSaveRoute } = useProfileStore()
+  const following = isFollowing(captainId ?? '')
 
   // Captain's published routes
   const captainRoutes = useMemo(
@@ -125,9 +130,20 @@ export default function CaptainScreen() {
           <Ionicons name="arrow-back" size={22} color={Colors.text} />
         </TouchableOpacity>
         <Text style={styles.topBarTitle}>Captain Profile</Text>
-        {isOwnProfile && (
+        {isOwnProfile ? (
           <TouchableOpacity style={styles.editBtn} onPress={() => router.push('/captain-dashboard')}>
             <Ionicons name="settings-outline" size={20} color={Colors.primary} />
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            style={[styles.followBtn, following && styles.followingBtn]}
+            onPress={() => following ? unfollowUser(captainId ?? '') : followUser(captainId ?? '')}
+            activeOpacity={0.8}
+          >
+            <Ionicons name={following ? 'checkmark' : 'add'} size={14} color={following ? Colors.secondary : '#fff'} />
+            <Text style={[styles.followBtnText, following && styles.followingBtnText]}>
+              {following ? 'Following' : 'Follow'}
+            </Text>
           </TouchableOpacity>
         )}
       </View>
@@ -204,13 +220,15 @@ export default function CaptainScreen() {
           <EmptySection message="No published routes yet." />
         ) : (
           captainRoutes.map((route) => {
-            const locked = route.isPremium && !hasAccessToRoute(route.id, captainId ?? '', viewerId)
+            const locked = !!(route.isPremium && !hasAccessToRoute(route.id, captainId ?? '', viewerId))
             return (
               <RouteCard
                 key={route.id}
                 route={route}
                 locked={locked}
+                isSaved={savedRouteIds.includes(route.id)}
                 onPress={() => handleBuyRoute(route)}
+                onSave={() => toggleSaveRoute(route.id)}
               />
             )
           })
@@ -223,7 +241,7 @@ export default function CaptainScreen() {
           <EmptySection message="No places shared yet." />
         ) : (
           captainPlaces.map((place) => {
-            const locked = place.isPremium && !hasAccessToPlace(place.id, captainId ?? '', viewerId)
+            const locked = !!(place.isPremium && !hasAccessToPlace(place.id, captainId ?? '', viewerId))
             return (
               <PlaceCard
                 key={place.id}
@@ -287,11 +305,15 @@ function EmptySection({ message }: { message: string }) {
 function RouteCard({
   route,
   locked,
+  isSaved,
   onPress,
+  onSave,
 }: {
   route: UserRoute
   locked: boolean
+  isSaved: boolean
   onPress: () => void
+  onSave: () => void
 }) {
   return (
     <TouchableOpacity style={styles.itemCard} onPress={onPress} activeOpacity={0.88}>
@@ -328,7 +350,17 @@ function RouteCard({
             <Text style={styles.freePillText}>{route.priceUsd ? 'Owned' : 'Free'}</Text>
           </View>
         )}
-        <Ionicons name="chevron-forward" size={16} color={Colors.textMuted} />
+        <TouchableOpacity
+          onPress={(e) => { e.stopPropagation(); onSave() }}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          activeOpacity={0.7}
+        >
+          <Ionicons
+            name={isSaved ? 'bookmark' : 'bookmark-outline'}
+            size={18}
+            color={isSaved ? Colors.secondary : Colors.textMuted}
+          />
+        </TouchableOpacity>
       </View>
     </TouchableOpacity>
   )
@@ -394,6 +426,17 @@ const styles = StyleSheet.create({
   backBtn: {},
   topBarTitle: { flex: 1, fontSize: 17, fontWeight: '700', color: Colors.text },
   editBtn: { padding: 4 },
+  followBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: Colors.secondary,
+    borderRadius: 20, paddingHorizontal: 14, paddingVertical: 7,
+  },
+  followingBtn: {
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1.5, borderColor: Colors.secondary,
+  },
+  followBtnText: { fontSize: 13, fontWeight: '700', color: '#fff' },
+  followingBtnText: { color: Colors.secondary },
 
   content: { padding: 16, gap: 12 },
 

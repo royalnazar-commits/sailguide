@@ -1,17 +1,15 @@
-import React, { useState, useMemo, useCallback } from 'react'
+import React, { useState, useMemo, useCallback, useEffect } from 'react'
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
-  TextInput, ScrollView, Image, Dimensions, Platform,
+  TextInput, ScrollView, Image, Dimensions, ActivityIndicator,
 } from 'react-native'
-import MapView, { Marker, Callout } from 'react-native-maps'
+import MapView, { Marker } from 'react-native-maps'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { router } from 'expo-router'
 import { Ionicons } from '@expo/vector-icons'
 import { BoatCard } from '../components/charter/BoatCard'
 import { CharterFilters } from '../components/charter/CharterFilters'
-import {
-  MOCK_YACHTS, FEATURED_DESTINATIONS, searchYachts, Destination,
-} from '../services/mockCharters'
+import { useCharterStore, Destination } from '../store/charterStore'
 import {
   Yacht, CharterFilters as FilterState,
   BOAT_TYPE_LABELS, BoatType, DEFAULT_FILTERS,
@@ -52,29 +50,29 @@ type ViewMode = 'list' | 'map'
 export default function CharterScreen() {
   const insets = useSafeAreaInsets()
 
-  // ── State ──────────────────────────────────────────────────────────────────
+  // ── Store ───────────────────────────────────────────────────────────────────
+  const {
+    yachts, yachtsLoading, yachtsError, destinations,
+    filters, activeType, setFilters, setActiveType,
+    getFilteredYachts, loadYachts,
+  } = useCharterStore()
+
+  // ── Local UI state ──────────────────────────────────────────────────────────
   const [viewMode, setViewMode]           = useState<ViewMode>('list')
   const [searchText, setSearchText]       = useState('')
-  const [activeType, setActiveType]       = useState<BoatType | 'ALL'>('ALL')
-  const [filters, setFilters]             = useState<FilterState>(DEFAULT_FILTERS)
   const [filtersOpen, setFiltersOpen]     = useState(false)
   const [selectedMapYacht, setSelectedMapYacht] = useState<Yacht | null>(null)
   const [searchFocused, setSearchFocused] = useState(false)
 
+  // Load fleet on mount
+  useEffect(() => { loadYachts() }, [])
+
   // ── Derived data ───────────────────────────────────────────────────────────
 
-  const activeFilters: FilterState = { ...filters, boatType: activeType }
-
-  const filteredYachts = useMemo(() => {
-    let results = searchYachts(
-      { destination: searchText },
-      { boatType: activeType, minCabins: filters.minCabins, maxPrice: filters.maxPricePerWeek },
-    )
-    if (filters.minYear > 2010) results = results.filter((y) => y.yearBuilt >= filters.minYear)
-    if (filters.minRating > 0) results = results.filter((y) => y.rating >= filters.minRating)
-    if (filters.minLengthM > 0) results = results.filter((y) => y.lengthM >= filters.minLengthM)
-    return results
-  }, [searchText, activeType, filters])
+  const filteredYachts = useMemo(
+    () => getFilteredYachts(searchText),
+    [searchText, activeType, filters, yachts],
+  )
 
   // Count active filters (excl. type which is shown separately)
   const activeFilterCount = [
@@ -207,6 +205,14 @@ export default function CharterScreen() {
         </ScrollView>
       </View>
 
+      {/* ── Loading / error ── */}
+      {yachtsLoading && (
+        <View style={styles.loadingRow}>
+          <ActivityIndicator size="small" color={Colors.primary} />
+          <Text style={styles.loadingText}>Loading yachts…</Text>
+        </View>
+      )}
+
       {/* ── Main content ── */}
       {viewMode === 'list' ? (
         <FlatList
@@ -217,7 +223,11 @@ export default function CharterScreen() {
           keyboardShouldPersistTaps="handled"
           ListHeaderComponent={
             !searchText ? (
-              <DiscoveryHeader onDestinationPress={handleDestinationPress} />
+              <DiscoveryHeader
+                yachtCount={yachts.length}
+                destinations={destinations}
+                onDestinationPress={handleDestinationPress}
+              />
             ) : (
               <Text style={styles.resultLabel}>
                 {filteredYachts.length} boat{filteredYachts.length !== 1 ? 's' : ''} in "{searchText}"
@@ -297,7 +307,15 @@ export default function CharterScreen() {
 
 // ── Discovery header (shown when search is empty) ─────────────────────────────
 
-function DiscoveryHeader({ onDestinationPress }: { onDestinationPress: (d: Destination) => void }) {
+function DiscoveryHeader({
+  yachtCount,
+  destinations,
+  onDestinationPress,
+}: {
+  yachtCount: number
+  destinations: Destination[]
+  onDestinationPress: (d: Destination) => void
+}) {
   return (
     <View style={discovery_styles.container}>
       {/* Banner */}
@@ -305,7 +323,7 @@ function DiscoveryHeader({ onDestinationPress }: { onDestinationPress: (d: Desti
         <Text style={discovery_styles.bannerTag}>✦ SAILING SEASON 2026</Text>
         <Text style={discovery_styles.bannerTitle}>Sail Anywhere,{'\n'}Your Way</Text>
         <Text style={discovery_styles.bannerSub}>
-          {MOCK_YACHTS.length} verified yachts · 6 destinations
+          {yachtCount > 0 ? `${yachtCount} verified yachts · ${destinations.length} destinations` : 'Explore the Mediterranean'}
         </Text>
       </View>
 
@@ -316,7 +334,7 @@ function DiscoveryHeader({ onDestinationPress }: { onDestinationPress: (d: Desti
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={discovery_styles.destRow}
       >
-        {FEATURED_DESTINATIONS.map((dest) => (
+        {destinations.map((dest) => (
           <TouchableOpacity
             key={dest.id}
             style={discovery_styles.destCard}
@@ -427,6 +445,13 @@ const styles = StyleSheet.create({
 
   listContent: { paddingHorizontal: 16, paddingTop: 0 },
   resultLabel: { fontSize: 13, color: Colors.textMuted, marginVertical: 10 },
+
+  loadingRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingHorizontal: 16, paddingVertical: 8,
+    backgroundColor: Colors.primary + '10',
+  },
+  loadingText: { fontSize: 12, color: Colors.primary, fontWeight: '600' },
 
   empty: { alignItems: 'center', paddingTop: 80, gap: 12, paddingHorizontal: 40 },
   emptyTitle: { fontSize: 18, fontWeight: '700', color: Colors.text },

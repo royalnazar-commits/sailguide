@@ -2,6 +2,7 @@
   "expo": {
     "name": "SailGuide",
     "slug": "sailguide",
+    "scheme": "sailguide",
     "version": "1.0.0",
     "orientation": "portrait",
     "assetBundlePatterns": [

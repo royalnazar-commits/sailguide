@@ -35,6 +35,18 @@ function computeTotalNm(stops: UserRouteStop[], getCoords: (placeId: string) => 
   return Math.round(total * 10) / 10
 }
 
+/**
+ * Route distance = only DAY_START + DAY_END stops (the actual sailing legs).
+ * Falls back to all non-ALT_END stops for legacy routes (seed routes, old format).
+ */
+function computeRoutNm(stops: UserRouteStop[]): number {
+  const routeStops = stops.filter(s => s.type === 'DAY_START' || s.type === 'DAY_END')
+  const base = routeStops.length >= 2
+    ? routeStops
+    : stops.filter(s => s.type !== 'ALT_END')
+  return computeTotalNm(base.sort((a, b) => a.sequence - b.sequence), () => null)
+}
+
 function computeEstimatedDays(stops: UserRouteStop[]): number {
   return stops.reduce((sum, s) => sum + (s.estimatedStayDays ?? 1), 0)
 }
@@ -148,6 +160,50 @@ export const SEED_ROUTES: UserRoute[] = [
     createdAt: '2026-02-20T15:00:00Z',
     updatedAt: '2026-02-20T16:00:00Z',
   },
+  // ── Captain Sofia's routes ─────────────────────────────────────────────────
+  {
+    id: 'route-sofia-1',
+    title: 'Kotor Bay Circuit',
+    description: 'Explore the dramatic fjord-like inner bay of Kotor in full — UNESCO old towns, Venetian baroque villages, and sheltered overnight anchorages. Short passages make this ideal for any skill level.',
+    stops: [
+      { id: 'ss1-s1', placeId: 'porto-montenegro-marina', sequence: 1, estimatedStayDays: 1 },
+      { id: 'ss1-s2', placeId: 'perast-pier',             sequence: 2, estimatedStayDays: 1 },
+      { id: 'ss1-s3', placeId: 'kotor-old-town-harbor',   sequence: 3, estimatedStayDays: 2 },
+      { id: 'ss1-s4', placeId: 'risan-harbor',            sequence: 4, estimatedStayDays: 1 },
+    ],
+    totalNm: 24,
+    estimatedDays: 5,
+    region: 'Boka Bay',
+    country: 'Montenegro',
+    tags: ['montenegro', 'bay', 'historic', 'beginner-friendly'],
+    status: 'PUBLISHED',
+    createdBy: 'captain-sofia',
+    createdByName: 'Captain Sofia',
+    publishedAt: '2026-02-28T10:00:00Z',
+    createdAt: '2026-02-28T09:00:00Z',
+    updatedAt: '2026-02-28T10:00:00Z',
+  },
+  {
+    id: 'route-sofia-2',
+    title: 'Montenegro Riviera Run',
+    description: 'A short but stunning coastal passage from the lively old town of Budva to the iconic Sveti Stefan island resort, finishing in the relaxed harbour of Petrovac. Perfect for a long weekend.',
+    stops: [
+      { id: 'ss2-s1', placeId: 'budva-marina',           sequence: 1, estimatedStayDays: 1 },
+      { id: 'ss2-s2', placeId: 'sveti-stefan-anchorage', sequence: 2, estimatedStayDays: 1 },
+      { id: 'ss2-s3', placeId: 'petrovac-harbor',        sequence: 3, estimatedStayDays: 1 },
+    ],
+    totalNm: 18,
+    estimatedDays: 3,
+    region: 'Montenegrin Riviera',
+    country: 'Montenegro',
+    tags: ['montenegro', 'riviera', 'scenic'],
+    status: 'PUBLISHED',
+    createdBy: 'captain-sofia',
+    createdByName: 'Captain Sofia',
+    publishedAt: '2026-03-05T10:00:00Z',
+    createdAt: '2026-03-05T09:00:00Z',
+    updatedAt: '2026-03-05T10:00:00Z',
+  },
 ]
 
 // ── Store interface ───────────────────────────────────────────────────────────
@@ -174,6 +230,20 @@ interface RouteBuilderState {
   updateStopName: (stopId: string, name: string) => void
   updateStopType: (stopId: string, type: string) => void
   updateStopStayDays: (stopId: string, days: number) => void
+  /**
+   * Auto-assign dayIndex to all stops based on cumulative nm.
+   * A new day starts when accumulated sailing distance exceeds nmPerDay.
+   */
+  autoSplitDays: (nmPerDay?: number) => void
+  /** Manually move a stop to a different day */
+  updateStopDayIndex: (stopId: string, dayIndex: number) => void
+  /**
+   * Add a waypoint with a specified dayIndex in one operation.
+   * When `insertBeforeEnd` is true and the day already has ≥2 main stops,
+   * the new stop is inserted before the day's last stop (correct ordering
+   * for intermediate waypoints added during the enrich phase).
+   */
+  addWaypointToDay: (lat: number, lng: number, dayIndex: number, name?: string, type?: string, insertBeforeEnd?: boolean) => void
   /** Load a saved route back into the draft for continued editing */
   loadRouteAsDraft: (routeId: string) => void
 
@@ -190,6 +260,8 @@ interface RouteBuilderState {
   unpublishRoute: (routeId: string) => void
   /** Set or clear premium pricing on a saved route */
   setRoutePremium: (routeId: string, isPremium: boolean, priceUsd: number) => void
+  /** Toggle public/private visibility for a saved route */
+  setRouteVisibility: (routeId: string, isPublic: boolean) => void
 
   // Persistence
   loadRoutes: () => Promise<void>
@@ -375,6 +447,134 @@ export const useRouteBuilderStore = create<RouteBuilderState>((set, get) => ({
     })
   },
 
+  autoSplitDays: (nmPerDay = 40) => {
+    set((s) => {
+      if (!s.draftRoute) return {}
+      const sorted = [...s.draftRoute.stops].sort((a, b) => a.sequence - b.sequence)
+      let currentDay = 0
+      let dayNm = 0
+      const updated = sorted.map((stop, i) => {
+        if (i > 0) {
+          const prev = sorted[i - 1]
+          const leg = haversineNm(prev.lat!, prev.lng!, stop.lat!, stop.lng!)
+          if (dayNm > 0 && dayNm + leg > nmPerDay) {
+            currentDay++
+            dayNm = 0
+          }
+          dayNm += leg
+        }
+        return { ...stop, dayIndex: currentDay }
+      })
+      return {
+        draftRoute: {
+          ...s.draftRoute,
+          stops: updated,
+          updatedAt: new Date().toISOString(),
+        },
+      }
+    })
+  },
+
+  updateStopDayIndex: (stopId, dayIndex) => {
+    set((s) => {
+      if (!s.draftRoute) return {}
+      return {
+        draftRoute: {
+          ...s.draftRoute,
+          stops: s.draftRoute.stops.map((st) => st.id === stopId ? { ...st, dayIndex } : st),
+          updatedAt: new Date().toISOString(),
+        },
+      }
+    })
+  },
+
+  addWaypointToDay: (lat, lng, dayIndex, name?, type?, insertBeforeEnd = false) => {
+    set((s) => {
+      if (!s.draftRoute) return {}
+
+      // ── DAY_START / DAY_END: enforce exactly one per day by replacing in-place ──
+      // This prevents duplicate start/end markers when the user moves them.
+      if (type === 'DAY_START' || type === 'DAY_END') {
+        const existingIdx = s.draftRoute.stops.findIndex(
+          st => (st.dayIndex ?? 0) === dayIndex && st.type === type
+        )
+        if (existingIdx >= 0) {
+          // Update coordinates and name in-place; sequence unchanged
+          const updatedStops = s.draftRoute.stops.map((st, i) =>
+            i === existingIdx ? { ...st, lat, lng, name: name ?? st.name } : st
+          )
+          return {
+            draftRoute: {
+              ...s.draftRoute,
+              stops: updatedStops,
+              totalNm: computeRoutNm(updatedStops),
+              updatedAt: new Date().toISOString(),
+            },
+          }
+        }
+        // No existing — fall through to append below
+      }
+
+      // ── Intermediate stops (add_stops phase): insert before the day's DAY_END ──
+      // Ensures polyline order stays: DAY_START → [stops] → DAY_END
+      if (insertBeforeEnd && type !== 'ALT_END' && type !== 'DAY_START' && type !== 'DAY_END') {
+        const dayEnd = s.draftRoute.stops
+          .filter(st => (st.dayIndex ?? 0) === dayIndex && st.type === 'DAY_END')
+          .sort((a, b) => a.sequence - b.sequence)[0]
+
+        if (dayEnd) {
+          const insertSeq = dayEnd.sequence
+          const shifted = s.draftRoute.stops.map(st =>
+            st.sequence >= insertSeq ? { ...st, sequence: st.sequence + 1 } : st
+          )
+          const newStop: UserRouteStop = {
+            id: `stop-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+            placeId: `custom-${Date.now()}`,
+            lat, lng,
+            name: name ?? `Stop ${insertSeq}`,
+            type,
+            sequence: insertSeq,
+            dayIndex,
+            estimatedStayDays: 0,
+          }
+          const allStops = [...shifted, newStop]
+          return {
+            draftRoute: {
+              ...s.draftRoute,
+              stops: allStops,
+              totalNm: computeRoutNm(allStops),
+              estimatedDays: computeEstimatedDays(allStops.filter(st => st.type !== 'ALT_END')),
+              updatedAt: new Date().toISOString(),
+            },
+          }
+        }
+      }
+
+      // ── Default: append at end ──
+      const seq = s.draftRoute.stops.length + 1
+      const newStop: UserRouteStop = {
+        id: `stop-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+        placeId: `custom-${Date.now()}`,
+        lat, lng,
+        name: name ?? `Stop ${seq}`,
+        type,
+        sequence: seq,
+        dayIndex,
+        estimatedStayDays: type === 'DAY_END' ? 1 : 0,
+      }
+      const allStops = [...s.draftRoute.stops, newStop]
+      return {
+        draftRoute: {
+          ...s.draftRoute,
+          stops: allStops,
+          totalNm: computeRoutNm(allStops),
+          estimatedDays: computeEstimatedDays(allStops.filter(st => st.type !== 'ALT_END')),
+          updatedAt: new Date().toISOString(),
+        },
+      }
+    })
+  },
+
   saveDraft: (getCoords, status = 'DRAFT') => {
     const { draftRoute, savedRoutes } = get()
     if (!draftRoute || !draftRoute.title.trim()) return null
@@ -413,8 +613,9 @@ export const useRouteBuilderStore = create<RouteBuilderState>((set, get) => ({
   },
 
   getAllPublishedRoutes: () => {
-    const userPublished = get().savedRoutes.filter((r) => r.status === 'PUBLISHED')
-    // Deduplicate: user-published routes override seed routes with same id (shouldn't happen, but safe)
+    // Only include public user routes (isPublic defaults to true when not set)
+    const userPublished = get().savedRoutes.filter((r) => r.status === 'PUBLISHED' && r.isPublic !== false)
+    // Deduplicate: user-published routes override seed routes with same id
     const userIds = new Set(userPublished.map((r) => r.id))
     return [...userPublished, ...SEED_ROUTES.filter((r) => !userIds.has(r.id))]
   },
@@ -447,6 +648,15 @@ export const useRouteBuilderStore = create<RouteBuilderState>((set, get) => ({
         r.id === routeId
           ? { ...r, isPremium, priceUsd: isPremium ? priceUsd : 0, updatedAt: new Date().toISOString() }
           : r,
+      ),
+    }))
+    get().saveRoutes()
+  },
+
+  setRouteVisibility: (routeId, isPublic) => {
+    set((s) => ({
+      savedRoutes: s.savedRoutes.map((r) =>
+        r.id === routeId ? { ...r, isPublic, updatedAt: new Date().toISOString() } : r,
       ),
     }))
     get().saveRoutes()

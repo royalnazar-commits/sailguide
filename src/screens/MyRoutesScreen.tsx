@@ -9,6 +9,7 @@ import { Ionicons } from '@expo/vector-icons'
 import { useRouteBuilderStore } from '../store/routeBuilderStore'
 import { useAuthStore } from '../store/authStore'
 import { usePlacesStore } from '../store/placesStore'
+import { useProfileStore } from '../store/profileStore'
 import { seedPlaces } from '../data/seedPlaces'
 import { UserRoute } from '../types/userRoute'
 import { Colors } from '../constants/colors'
@@ -17,7 +18,7 @@ import { Colors } from '../constants/colors'
 
 export default function MyRoutesScreen() {
   const insets = useSafeAreaInsets()
-  const { savedRoutes, deleteRoute, startNewRoute, draftRoute, publishRoute, unpublishRoute } = useRouteBuilderStore()
+  const { savedRoutes, deleteRoute, startNewRoute, draftRoute, publishRoute, unpublishRoute, setRouteVisibility } = useRouteBuilderStore()
   const { user } = useAuthStore()
   const { userPlaces } = usePlacesStore()
   const allPlaces = [...seedPlaces, ...userPlaces]
@@ -109,6 +110,7 @@ export default function MyRoutesScreen() {
                 publishRoute(item.id, name)
               }}
               onUnpublish={() => unpublishRoute(item.id)}
+              onToggleVisibility={() => setRouteVisibility(item.id, item.isPublic === false)}
             />
           )}
         />
@@ -132,7 +134,7 @@ export default function MyRoutesScreen() {
 // ── Route card ────────────────────────────────────────────────────────────────
 
 function RouteCard({
-  route, allPlaces, onPress, onDelete, onPublish, onUnpublish,
+  route, allPlaces, onPress, onDelete, onPublish, onUnpublish, onToggleVisibility,
 }: {
   route: UserRoute
   allPlaces: { id: string; name: string; region?: string }[]
@@ -140,8 +142,13 @@ function RouteCard({
   onDelete: () => void
   onPublish: () => void
   onUnpublish: () => void
+  onToggleVisibility: () => void
 }) {
   const [showActions, setShowActions] = React.useState(false)
+  const { preferences } = useProfileStore()
+  const distLabel = preferences.distanceUnit === 'km'
+    ? `${Math.round(route.totalNm * 1.852)} km`
+    : `${route.totalNm} nm`
 
   const firstPlace = allPlaces.find((p) => p.id === route.stops[0]?.placeId)
   const lastPlace  = allPlaces.find((p) => p.id === route.stops[route.stops.length - 1]?.placeId)
@@ -155,10 +162,18 @@ function RouteCard({
       <View style={styles.cardContent}>
         {/* Top row */}
         <View style={styles.cardTopRow}>
-          <View style={[styles.statusBadge, { backgroundColor: route.status === 'PUBLISHED' ? Colors.success + '18' : Colors.secondary + '18' }]}>
-            <Text style={[styles.statusText, { color: route.status === 'PUBLISHED' ? Colors.success : Colors.secondary }]}>
-              {route.status === 'PUBLISHED' ? 'Published' : 'Draft'}
-            </Text>
+          <View style={styles.cardTopLeft}>
+            <View style={[styles.statusBadge, { backgroundColor: route.status === 'PUBLISHED' ? Colors.success + '18' : Colors.secondary + '18' }]}>
+              <Text style={[styles.statusText, { color: route.status === 'PUBLISHED' ? Colors.success : Colors.secondary }]}>
+                {route.status === 'PUBLISHED' ? 'Published' : 'Draft'}
+              </Text>
+            </View>
+            {route.isPublic === false && (
+              <View style={styles.privateBadge}>
+                <Ionicons name="eye-off-outline" size={11} color={Colors.textMuted} />
+                <Text style={styles.privateBadgeText}>Private</Text>
+              </View>
+            )}
           </View>
           <TouchableOpacity
             onPress={() => setShowActions((v) => !v)}
@@ -189,7 +204,7 @@ function RouteCard({
           {route.totalNm > 0 && (
             <View style={styles.statItem}>
               <Ionicons name="navigate-outline" size={13} color={Colors.primary} />
-              <Text style={styles.statText}>{route.totalNm} nm</Text>
+              <Text style={styles.statText}>{distLabel}</Text>
             </View>
           )}
           {(route.estimatedDays ?? 0) > 0 && (
@@ -233,6 +248,24 @@ function RouteCard({
                 <Ionicons name="arrow-down-circle-outline" size={16} color={Colors.textSecondary} />
                 <Text style={[styles.actionMenuText, { color: Colors.textSecondary }]}>Unpublish</Text>
               </TouchableOpacity>
+            )}
+            {route.status === 'PUBLISHED' && (
+              <>
+                <View style={styles.actionMenuDivider} />
+                <TouchableOpacity
+                  style={styles.actionMenuItem}
+                  onPress={() => { setShowActions(false); onToggleVisibility() }}
+                >
+                  <Ionicons
+                    name={route.isPublic === false ? 'eye-outline' : 'eye-off-outline'}
+                    size={16}
+                    color={Colors.textSecondary}
+                  />
+                  <Text style={styles.actionMenuText}>
+                    {route.isPublic === false ? 'Make Public' : 'Make Private'}
+                  </Text>
+                </TouchableOpacity>
+              </>
             )}
             <View style={styles.actionMenuDivider} />
             <TouchableOpacity
@@ -309,8 +342,15 @@ const styles = StyleSheet.create({
   cardAccent: { width: 4 },
   cardContent: { flex: 1, padding: 14, gap: 6 },
   cardTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  cardTopLeft: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   statusBadge: { borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4 },
   statusText: { fontSize: 12, fontWeight: '600' },
+  privateBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    backgroundColor: Colors.border, borderRadius: 6,
+    paddingHorizontal: 6, paddingVertical: 3,
+  },
+  privateBadgeText: { fontSize: 11, color: Colors.textMuted, fontWeight: '500' },
   cardTitle: { fontSize: 16, fontWeight: '700', color: Colors.text },
   routeRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   routeFrom: { fontSize: 13, color: Colors.textSecondary, flex: 1 },
