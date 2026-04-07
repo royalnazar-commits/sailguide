@@ -432,7 +432,7 @@ const styles = StyleSheet.create({
     borderRadius: 20, paddingHorizontal: 14, paddingVertical: 7,
   },
   followingBtn: {
-    backgroundColor: '#EFF6FF',
+    backgroundColor: Colors.secondary + '12',
     borderWidth: 1.5, borderColor: Colors.secondary,
   },
   followBtnText: { fontSize: 13, fontWeight: '700', color: '#fff' },
@@ -518,6 +518,11 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
     marginBottom: 10,
     gap: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
   },
   itemIconWrap: {
     width: 44,

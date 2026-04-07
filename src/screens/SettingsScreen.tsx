@@ -313,8 +313,8 @@ function ToggleItem({
       <Switch
         value={value}
         onValueChange={onValueChange}
-        trackColor={{ false: Colors.border, true: Colors.primary + '40' }}
-        thumbColor={value ? Colors.primary : '#f4f3f4'}
+        trackColor={{ false: Colors.border, true: Colors.secondary }}
+        thumbColor={value ? '#fff' : '#f4f3f4'}
       />
     </View>
   )
@@ -369,7 +369,10 @@ const styles = StyleSheet.create({
 
   section: { marginTop: 20, paddingHorizontal: 20 },
   sectionTitle: { fontSize: 16, fontWeight: '700', color: Colors.text, marginBottom: 12 },
-  card: { backgroundColor: '#fff', borderRadius: 16, overflow: 'hidden' },
+  card: {
+    backgroundColor: '#fff', borderRadius: 16, overflow: 'hidden',
+    borderWidth: 1, borderColor: Colors.border,
+  },
 
   settingsItem: {
     flexDirection: 'row', alignItems: 'center', gap: 14,

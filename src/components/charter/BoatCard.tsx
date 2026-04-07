@@ -28,9 +28,11 @@ interface Props {
   onPress: () => void
   /** Show as a compact horizontal card (for map bottom sheet) */
   compact?: boolean
+  isFavorited?: boolean
+  onToggleFavorite?: () => void
 }
 
-export function BoatCard({ yacht, onPress, compact = false }: Props) {
+export function BoatCard({ yacht, onPress, compact = false, isFavorited = false, onToggleFavorite }: Props) {
   const typeColor = TYPE_COLORS[yacht.type] ?? Colors.secondary
   const [imgErr, setImgErr] = useState(false)
   const heroUri = imgErr ? getFallback(yacht.type) : (yacht.images[0] ?? getFallback(yacht.type))
@@ -38,6 +40,7 @@ export function BoatCard({ yacht, onPress, compact = false }: Props) {
 
   if (compact) {
     return (
+      <View style={compact_styles.cardWrap}>
       <TouchableOpacity style={compact_styles.card} onPress={onPress} activeOpacity={0.88}>
         <Image source={{ uri: heroUri }} style={compact_styles.image} onError={() => setImgErr(true)} />
         <View style={compact_styles.body}>
@@ -53,10 +56,12 @@ export function BoatCard({ yacht, onPress, compact = false }: Props) {
           </View>
         </View>
       </TouchableOpacity>
+      </View>
     )
   }
 
   return (
+    <View style={styles.cardWrap}>
     <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.92}>
       {/* ── Image ── */}
       <View>
@@ -78,6 +83,21 @@ export function BoatCard({ yacht, onPress, compact = false }: Props) {
         <View style={styles.yearBadge}>
           <Text style={styles.yearText}>{yacht.yearBuilt}</Text>
         </View>
+
+        {/* Favorite button */}
+        {onToggleFavorite && (
+          <TouchableOpacity
+            style={styles.favoriteBtn}
+            onPress={(e) => { e.stopPropagation(); onToggleFavorite() }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons
+              name={isFavorited ? 'heart' : 'heart-outline'}
+              size={18}
+              color={isFavorited ? '#EF4444' : '#fff'}
+            />
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* ── Body ── */}
@@ -120,13 +140,14 @@ export function BoatCard({ yacht, onPress, compact = false }: Props) {
         </View>
       </View>
     </TouchableOpacity>
+    </View>
   )
 }
 
 function SpecItem({ icon, value }: { icon: any; value: string }) {
   return (
     <View style={styles.specItem}>
-      <Ionicons name={icon} size={13} color={Colors.textSecondary} />
+      <Ionicons name={icon} size={13} color={Colors.secondary} />
       <Text style={styles.specText}>{value}</Text>
     </View>
   )
@@ -135,16 +156,21 @@ function SpecItem({ icon, value }: { icon: any; value: string }) {
 // ── Styles ────────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  card: {
-    backgroundColor: '#fff',
+  // Shadow wrapper — no overflow:hidden so iOS shadow isn't clipped.
+  cardWrap: {
     borderRadius: 18,
-    overflow: 'hidden',
     marginBottom: 18,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.10,
     shadowRadius: 12,
     elevation: 5,
+  },
+  // Inner card clips image to border radius.
+  card: {
+    backgroundColor: '#fff',
+    borderRadius: 18,
+    overflow: 'hidden',
   },
   image: { width: '100%', height: 210 },
   imageScrim: {
@@ -170,6 +196,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8, paddingVertical: 3,
   },
   yearText: { color: '#fff', fontSize: 11, fontWeight: '600' },
+  favoriteBtn: {
+    position: 'absolute', bottom: 10, left: 12,
+    width: 32, height: 32, borderRadius: 16,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    alignItems: 'center', justifyContent: 'center',
+  },
 
   body: { padding: 14 },
 
@@ -190,7 +222,7 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   specItem: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 },
-  specText: { fontSize: 12, color: Colors.textSecondary, fontWeight: '600' },
+  specText: { fontSize: 12, color: Colors.secondary, fontWeight: '600' },
   specDivider: { width: 1, height: 14, backgroundColor: Colors.border },
 
   footer: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between' },
@@ -205,18 +237,21 @@ const styles = StyleSheet.create({
 })
 
 const compact_styles = StyleSheet.create({
-  card: {
-    flexDirection: 'row',
-    backgroundColor: '#fff',
-    borderRadius: 14,
-    overflow: 'hidden',
+  cardWrap: {
     width: 260,
     marginRight: 12,
+    borderRadius: 14,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.10,
     shadowRadius: 8,
     elevation: 3,
+  },
+  card: {
+    flexDirection: 'row',
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    overflow: 'hidden',
   },
   image: { width: 90, height: 90 },
   body: { flex: 1, padding: 10, justifyContent: 'space-between' },

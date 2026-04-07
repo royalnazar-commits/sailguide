@@ -1,2 +1,1 @@
-import CaptainScreen from '../../src/screens/CaptainScreen'
-export default CaptainScreen
+export { default } from '../../src/screens/ProfileScreen'

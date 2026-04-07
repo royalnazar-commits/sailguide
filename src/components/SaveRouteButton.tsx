@@ -72,7 +72,7 @@ const styles = StyleSheet.create({
     fontWeight: '600' 
   },
   savedBtn: {
-    backgroundColor: '#EFF6FF',
+    backgroundColor: Colors.secondary + '12',
     borderWidth: 1.5,
     borderColor: Colors.secondary,
     borderRadius: 14,

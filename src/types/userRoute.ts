@@ -7,6 +7,15 @@
 
 export type UserRouteStatus = 'DRAFT' | 'PUBLISHED'
 
+export type StayType = 'marina' | 'anchorage' | 'custom'
+
+export interface UserRouteDayDetail {
+  description?: string
+  highlights?: string[]
+  warnings?: string[]
+  stayType?: StayType
+}
+
 export interface UserRouteStop {
   id: string
   /** References a Place id (seed or user-created). 'custom-*' for map-tap waypoints. */
@@ -21,11 +30,17 @@ export interface UserRouteStop {
   lng?: number
   /** Display name for custom waypoints */
   name?: string
+  /** Public-facing description of this stop shown in the route timeline */
+  description?: string
   /**
    * Stop type badge — MARINA, ANCHORAGE, BAY, BEACH, CAVE, LAGOON, FUEL, SWIM, CUSTOM.
    * Defaults to CUSTOM when not set.
    */
   type?: string
+  /** Captain marks this as a must-visit — renders ★ Rec badge in timeline */
+  isRecommended?: boolean
+  /** Approximate visit duration in minutes — shown as ~20min / ~1h in timeline */
+  durationMins?: number
   /**
    * Which day this stop belongs to (0-based).
    * Assigned automatically by autoSplitDays() or manually by the captain.
@@ -71,4 +86,12 @@ export interface UserRoute {
   priceUsd?: number
   /** userId of the captain who owns this route (for access checks) */
   captainId?: string
+
+  // ── Per-day content ────────────────────────────────────────────────────────
+  /** Keyed by dayIndex (0-based). Captain-authored details per sailing day. */
+  dayDetails?: Record<number, UserRouteDayDetail>
+
+  // ── Media ─────────────────────────────────────────────────────────────────
+  /** Image URIs. First entry is the cover image shown in community catalog. */
+  images?: string[]
 }

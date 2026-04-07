@@ -9,6 +9,7 @@ import { Ionicons } from '@expo/vector-icons'
 import { BoatGallery } from '../components/charter/BoatGallery'
 import { AvailabilityCalendar } from '../components/charter/AvailabilityCalendar'
 import { useCharterStore } from '../store/charterStore'
+import { useProfileStore } from '../store/profileStore'
 import { BOAT_TYPE_LABELS, SkipperOption } from '../types/charter'
 import { Colors } from '../constants/colors'
 
@@ -40,8 +41,8 @@ const MOCK_REVIEWS = [
 export default function BoatDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>()
   const insets = useSafeAreaInsets()
-  const [isSaved, setIsSaved] = useState(false)
   const [selectedCheckIn, setSelectedCheckIn] = useState<string | null>(null)
+  const { toggleFavoriteYacht, isFavoriteYacht } = useProfileStore()
   const [activeSection, setActiveSection] = useState<'specs' | 'equipment' | 'reviews' | 'availability'>('specs')
 
   const { getYachtById, loadYachtDetail, loadAvailability, bookedWeeks, detailLoading } = useCharterStore()
@@ -104,12 +105,12 @@ export default function BoatDetailScreen() {
       {/* Save button overlay */}
       <TouchableOpacity
         style={[styles.saveBtn, { top: insets.top + 8 }]}
-        onPress={() => setIsSaved((s) => !s)}
+        onPress={() => toggleFavoriteYacht(yachtId)}
       >
         <Ionicons
-          name={isSaved ? 'heart' : 'heart-outline'}
+          name={isFavoriteYacht(yachtId) ? 'heart' : 'heart-outline'}
           size={20}
-          color={isSaved ? '#EF4444' : '#fff'}
+          color={isFavoriteYacht(yachtId) ? '#EF4444' : '#fff'}
         />
       </TouchableOpacity>
 

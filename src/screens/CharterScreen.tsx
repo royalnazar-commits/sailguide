@@ -10,6 +10,7 @@ import { Ionicons } from '@expo/vector-icons'
 import { BoatCard } from '../components/charter/BoatCard'
 import { CharterFilters } from '../components/charter/CharterFilters'
 import { useCharterStore, Destination } from '../store/charterStore'
+import { useProfileStore } from '../store/profileStore'
 import {
   Yacht, CharterFilters as FilterState,
   BOAT_TYPE_LABELS, BoatType, DEFAULT_FILTERS,
@@ -56,6 +57,7 @@ export default function CharterScreen() {
     filters, activeType, setFilters, setActiveType,
     getFilteredYachts, loadYachts,
   } = useCharterStore()
+  const { savedYachts, toggleFavoriteYacht, isFavoriteYacht } = useProfileStore()
 
   // ── Local UI state ──────────────────────────────────────────────────────────
   const [viewMode, setViewMode]           = useState<ViewMode>('list')
@@ -108,6 +110,19 @@ export default function CharterScreen() {
             </Text>
           </View>
           <View style={styles.headerActions}>
+            <View>
+              <TouchableOpacity
+                style={styles.viewToggle}
+                onPress={() => router.push('/saved-yachts')}
+              >
+                <Ionicons name="heart-outline" size={18} color={Colors.primary} />
+              </TouchableOpacity>
+              {savedYachts.length > 0 && (
+                <View style={styles.savedBadge}>
+                  <Text style={styles.savedBadgeText}>{savedYachts.length}</Text>
+                </View>
+              )}
+            </View>
             <TouchableOpacity
               style={[styles.viewToggle, viewMode === 'map' && styles.viewToggleActive]}
               onPress={() => setViewMode((v) => v === 'list' ? 'map' : 'list')}
@@ -235,7 +250,12 @@ export default function CharterScreen() {
             )
           }
           renderItem={({ item }) => (
-            <BoatCard yacht={item} onPress={() => handleYachtPress(item.id)} />
+            <BoatCard
+              yacht={item}
+              onPress={() => handleYachtPress(item.id)}
+              isFavorited={isFavoriteYacht(item.id)}
+              onToggleFavorite={() => toggleFavoriteYacht(item.id)}
+            />
           )}
           ListEmptyComponent={
             <View style={styles.empty}>
@@ -403,6 +423,13 @@ const styles = StyleSheet.create({
   },
   viewToggleActive: { backgroundColor: Colors.primary },
   viewToggleText: { fontSize: 12, fontWeight: '700', color: Colors.primary },
+  savedBadge: {
+    position: 'absolute', top: -5, right: -5,
+    backgroundColor: '#EF4444', borderRadius: 7,
+    minWidth: 14, height: 14, alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 2,
+  },
+  savedBadgeText: { color: '#fff', fontSize: 8, fontWeight: '800' },
 
   searchRow: { flexDirection: 'row', gap: 8 },
   searchBar: {

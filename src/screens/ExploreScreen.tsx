@@ -55,6 +55,17 @@ const CHIP_EMOJI: Partial<Record<CanonicalPlaceType, string>> = {
   POI:        '📍',
 }
 
+// ── Cluster / bbox constants ────────────────────────────────────────────────
+
+/**
+ * Fractional padding applied to the cluster bbox on each side.
+ * Without this, markers at the viewport edge are excluded from getClusters()
+ * → unmounted by React → remounted on zoom-out → snapshot taken before fonts
+ * load → blank marker ("never comes back").
+ * 0.25 = 25 % overhang on each side.
+ */
+const BBOX_PAD = 0.25
+
 // ── Initial map region ──────────────────────────────────────────────────────
 
 const INITIAL_REGION: Region = {
@@ -94,9 +105,20 @@ function rankResults(places: Place[], query: string): Place[] {
 // ── Screen ──────────────────────────────────────────────────────────────────
 
 export default function ExploreScreen() {
-  const mapRef          = useRef<MapView>(null)
-  const searchRef       = useRef<TextInput>(null)
+  const mapRef           = useRef<MapView>(null)
+  const searchRef        = useRef<TextInput>(null)
   const currentRegionRef = useRef(INITIAL_REGION)
+  // Last zoom integer committed to region state. Used to trigger an IMMEDIATE
+  // setRegion when the integer changes (cluster arrangement changes).
+  const lastCommittedZoom = useRef(-1)
+  // Debounce timer for within-zoom-level bbox drift.
+  // Supercluster zoom level N covers a 2× latitudeDelta range. Within that
+  // range the zoom integer never changes, so the zoom-integer check alone
+  // never fires setRegion. The bbox can drift by up to half a viewport width,
+  // pushing signals outside the stale padded bbox → they unmount.
+  // The debounce fires setRegion at most every 100 ms during a gesture so the
+  // bbox stays fresh without rendering at 60 fps.
+  const regionDebounce = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // ── UI state ──────────────────────────────────────────────────────────────
   const [activeFilter,   setActiveFilter]   = useState<FilterKey>('ALL')
@@ -151,7 +173,6 @@ export default function ExploreScreen() {
     })
   }, [])
   const authUser = useAuthStore((s) => s.user)
-  const { draftRoute, startNewRoute }    = useRouteBuilderStore()
   const { getActiveReportsForPlace, getHighestSeverityForPlace } = useConditionsStore()
 
   const currentUserId = authUser?.id ?? localUserId
@@ -190,43 +211,19 @@ export default function ExploreScreen() {
 
   const clusters = useMemo(() => {
     const { latitude, longitude, latitudeDelta, longitudeDelta } = region
-    const zoom = Math.min(20, Math.max(0, Math.round(Math.log2(360 / latitudeDelta))))
+    // Math.floor instead of Math.round: avoids flip-flopping at zoom boundaries
+    // (e.g. 6.5 rounds to 7 then back to 6 on tiny region change → clusters
+    // constantly reform with new internal IDs → unmount/remount flash).
+    const zoom = Math.min(20, Math.max(0, Math.floor(Math.log2(360 / latitudeDelta))))
     const bbox: [number, number, number, number] = [
-      longitude - longitudeDelta / 2,
-      latitude  - latitudeDelta  / 2,
-      longitude + longitudeDelta / 2,
-      latitude  + latitudeDelta  / 2,
+      longitude - longitudeDelta / 2 * (1 + BBOX_PAD),
+      latitude  - latitudeDelta  / 2 * (1 + BBOX_PAD),
+      longitude + longitudeDelta / 2 * (1 + BBOX_PAD),
+      latitude  + latitudeDelta  / 2 * (1 + BBOX_PAD),
     ]
     return clusterIndex.getClusters(bbox, zoom)
   }, [clusterIndex, region])
 
-  // ── Nearby filter disabled — show all signals ─────────────────────────────
-  const nearbySignals = signals
-
-  // ── Signal clustering ─────────────────────────────────────────────────────
-  const signalClusterIndex = useMemo(() => {
-    const index = new Supercluster<{ signalId: string }>({ radius: 60, maxZoom: 10 })
-    index.load(
-      nearbySignals.map((s) => ({
-        type: 'Feature' as const,
-        geometry: { type: 'Point' as const, coordinates: [s.lng, s.lat] },
-        properties: { signalId: s.id },
-      }))
-    )
-    return index
-  }, [nearbySignals])
-
-  const signalClusters = useMemo(() => {
-    const { latitude, longitude, latitudeDelta, longitudeDelta } = region
-    const zoom = Math.min(20, Math.max(0, Math.round(Math.log2(360 / latitudeDelta))))
-    const bbox: [number, number, number, number] = [
-      longitude - longitudeDelta / 2,
-      latitude  - latitudeDelta  / 2,
-      longitude + longitudeDelta / 2,
-      latitude  + latitudeDelta  / 2,
-    ]
-    return signalClusterIndex.getClusters(bbox, zoom)
-  }, [signalClusterIndex, region])
 
   // ── Actions ───────────────────────────────────────────────────────────────
 
@@ -285,7 +282,16 @@ export default function ExploreScreen() {
   }
 
   const handleBuildRoute = () => {
-    if (!draftRoute) startNewRoute()
+    // Flush the live map center into sharedMapRegion right now (don't rely on
+    // the last onRegionChangeComplete — user may have been mid-pan).
+    const liveRegion = currentRegionRef.current
+    setSharedMapRegion(liveRegion)
+    console.log('[ExploreScreen] handleBuildRoute — live region:', liveRegion)
+
+    // Reset and create synchronously so draftRoute is non-null on first render.
+    const { resetRouteBuilder, createNewRouteDraft } = useRouteBuilderStore.getState()
+    resetRouteBuilder()
+    createNewRouteDraft()
     router.push('/route-builder')
   }
 
@@ -426,7 +432,42 @@ export default function ExploreScreen() {
         ref={mapRef}
         style={StyleSheet.absoluteFillObject}
         initialRegion={INITIAL_REGION}
-        onRegionChangeComplete={(r) => { currentRegionRef.current = r; setRegion(r); setSharedMapRegion(r) }}
+        onRegionChange={(r) => {
+          // Always keep the ref current — used elsewhere for live center reads.
+          currentRegionRef.current = r
+          const z = Math.min(20, Math.max(0, Math.floor(Math.log2(360 / r.latitudeDelta))))
+
+          if (z !== lastCommittedZoom.current) {
+            // ── Zoom integer changed ──────────────────────────────────────────
+            // Cluster arrangement changes at this boundary → commit immediately.
+            // Cancel any pending debounce (superseded by this update).
+            lastCommittedZoom.current = z
+            if (regionDebounce.current) { clearTimeout(regionDebounce.current); regionDebounce.current = null }
+            setRegion(r)
+          } else {
+            // ── Same zoom integer, bbox drifting ─────────────────────────────
+            // Zoom level N covers a 2× latitudeDelta range. Within that range
+            // the integer check above never fires, but the bbox can shrink or
+            // shift enough to push signals outside it → markers unmount.
+            // Fix: debounce a setRegion to keep the bbox fresh (≤10 renders/sec).
+            // Use currentRegionRef at timeout time, not the captured r, so we
+            // always commit the freshest position even if the gesture continued.
+            if (regionDebounce.current) clearTimeout(regionDebounce.current)
+            regionDebounce.current = setTimeout(() => {
+              regionDebounce.current = null
+              setRegion(currentRegionRef.current)
+            }, 100)
+          }
+        }}
+        onRegionChangeComplete={(r) => {
+          // Gesture + animation fully settled. Cancel any pending debounce —
+          // this call supersedes it with the precise final region.
+          if (regionDebounce.current) { clearTimeout(regionDebounce.current); regionDebounce.current = null }
+          currentRegionRef.current = r
+          lastCommittedZoom.current = Math.min(20, Math.max(0, Math.floor(Math.log2(360 / r.latitudeDelta))))
+          setRegion(r)
+          setSharedMapRegion(r)
+        }}
         onPress={handleMapPress}
         showsUserLocation
         showsCompass={false}
@@ -464,12 +505,14 @@ export default function ExploreScreen() {
 
               if (props.cluster) {
                 // ── Cluster bubble ──────────────────────────────────────
+                // Key: position-based, not cluster.id — supercluster reassigns
+                // internal IDs whenever clusters reform at a new zoom level,
+                // causing React to unmount+remount on every zoom gesture.
                 return (
-                  <Marker
-                    key={`cluster-${cluster.id}`}
+                  <StableMarker
+                    key={`cluster-${Math.round(lat * 1e4)}-${Math.round(lng * 1e4)}`}
                     coordinate={{ latitude: lat, longitude: lng }}
                     anchor={{ x: 0.5, y: 0.5 }}
-                    tracksViewChanges={false}
                     onPress={() => {
                       const expansion = clusterIndex.getClusterExpansionZoom(cluster.id as number)
                       const newDelta = 360 / Math.pow(2, expansion)
@@ -480,7 +523,7 @@ export default function ExploreScreen() {
                     }}
                   >
                     <ClusterBubble count={props.point_count} />
-                  </Marker>
+                  </StableMarker>
                 )
               }
 
@@ -500,68 +543,15 @@ export default function ExploreScreen() {
               )
             })
         }
-        {/* ── Selected signal: pinned outside cluster loop so it can never
-              be removed by bbox recalculation or tracksViewChanges transitions */}
-        {selectedSignal && (
-          <Marker
-            key={`sig-pinned-${selectedSignal.id}`}
-            coordinate={{ latitude: selectedSignal.lat, longitude: selectedSignal.lng }}
-            anchor={{ x: 0.5, y: 0.5 }}
-            tracksViewChanges={false}
-            onPress={() => {
-              setSelectedPlace(null)
-              setSelectedSignal(selectedSignal)
-            }}
-          >
-            <SignalMarker signal={selectedSignal} selected={true} />
-          </Marker>
-        )}
-
-        {/* ── Signal markers (clustered layer) — skip selected to avoid duplicate */}
-        {signalClusters.map((cluster) => {
-          const [lng, lat] = cluster.geometry.coordinates
-          const props = cluster.properties as any
-
-          if (props.cluster) {
-            return (
-              <Marker
-                key={`signal-cluster-${cluster.id}`}
-                coordinate={{ latitude: lat, longitude: lng }}
-                anchor={{ x: 0.5, y: 0.5 }}
-                tracksViewChanges={false}
-                onPress={() => {
-                  const expansion = signalClusterIndex.getClusterExpansionZoom(cluster.id as number)
-                  const newDelta = 360 / Math.pow(2, expansion)
-                  mapRef.current?.animateToRegion(
-                    { latitude: lat, longitude: lng, latitudeDelta: newDelta, longitudeDelta: newDelta },
-                    350,
-                  )
-                }}
-              >
-                <SignalClusterBubble count={props.point_count} />
-              </Marker>
-            )
-          }
-
-          const signal = nearbySignals.find((s) => s.id === props.signalId)
-          if (!signal) return null
-          // Already rendered by the pinned marker above
-          if (selectedSignal?.id === signal.id) return null
-          return (
-            <Marker
-              key={signal.id}
-              coordinate={{ latitude: lat, longitude: lng }}
-              anchor={{ x: 0.5, y: 0.5 }}
-              tracksViewChanges={false}
-              onPress={() => {
-                setSelectedPlace(null)
-                setSelectedSignal(signal)
-              }}
-            >
-              <SignalMarker signal={signal} selected={false} />
-            </Marker>
-          )
-        })}
+        {/* ── Signal markers — stable persistent layer, no clustering, no bbox ── */}
+        {signals.map((signal) => (
+          <PersistentSignalMarker
+            key={signal.id}
+            signal={signal}
+            isSelected={selectedSignal?.id === signal.id}
+            onPress={() => { setSelectedPlace(null); setSelectedSignal(signal) }}
+          />
+        ))}
       </MapView>
 
       {/* ── Search bar (hidden while repositioning) ──────────────────────── */}
@@ -711,7 +701,7 @@ export default function ExploreScreen() {
           <TouchableOpacity style={styles.buildRouteBtn} onPress={handleBuildRoute} activeOpacity={0.85}>
             <Ionicons name="git-branch-outline" size={16} color="#fff" />
             <Text style={styles.buildRouteBtnText}>
-              {draftRoute ? 'Continue Route' : 'Build Route'}
+              Build Route
             </Text>
           </TouchableOpacity>
 
@@ -1034,49 +1024,85 @@ function ClusterBubble({ count }: { count: number }) {
   )
 }
 
-// ── Signal cluster bubble component ──────────────────────────────────────────
+// ── StableMarker ──────────────────────────────────────────────────────────────
+//
+// react-native-maps captures a native bitmap snapshot of a Marker's React view
+// tree when tracksViewChanges transitions to false. If the snapshot is taken
+// before text/emoji fonts have painted (a race on mount + remount), the result
+// is a blank/invisible marker.
+//
+// This wrapper starts with tracksViewChanges=true — keeping the native layer in
+// sync with the JS view — then disables it after 500 ms. 500 ms is one full
+// bridge-render cycle: enough for fonts to load and text to paint.
+//
+// Because the key drives identity, every fresh mount (due to bbox exclusion or
+// cluster reformation) resets the timer and guarantees a correct snapshot.
+//
+// PlaceMarker does NOT need this wrapper because it uses pure Views/borders
+// with no font-dependent content. ClusterBubble uses StableMarker.
+// Signal markers use PersistentSignalMarker instead (see below).
 
-function SignalClusterBubble({ count }: { count: number }) {
-  const size = count <= 5 ? 42 : 48
-  const hasGlow = count >= 6
-  return (
-    <View style={{ alignItems: 'center', justifyContent: 'center' }}>
-      {hasGlow && (
-        <View style={[
-          signalClusterStyles.glow,
-          { width: size + 18, height: size + 18, borderRadius: (size + 18) / 2 },
-        ]} />
-      )}
-      <View style={[signalClusterStyles.bubble, { width: size, height: size, borderRadius: size / 2 }]}>
-        <Text style={signalClusterStyles.emoji}>👥</Text>
-        <Text style={signalClusterStyles.count}>{count}</Text>
-      </View>
-    </View>
-  )
+function StableMarker({ children, ...rest }: React.ComponentProps<typeof Marker>) {
+  const [tracks, setTracks] = useState(true)
+  React.useEffect(() => {
+    const t = setTimeout(() => setTracks(false), 500)
+    return () => clearTimeout(t)
+  }, [])
+  return <Marker {...rest} tracksViewChanges={tracks}>{children}</Marker>
 }
 
-const signalClusterStyles = StyleSheet.create({
-  glow: {
-    position: 'absolute',
-    backgroundColor: '#3B82F620',
-    borderWidth: 1.5,
-    borderColor: '#3B82F640',
-  },
-  bubble: {
-    backgroundColor: '#3B82F6',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: '#fff',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    elevation: 5,
-  },
-  emoji: { fontSize: 10, lineHeight: 13 },
-  count: { color: '#fff', fontSize: 11, fontWeight: '700', lineHeight: 13 },
-})
+// ── PersistentSignalMarker ────────────────────────────────────────────────────
+//
+// Signals are a static overlay: mounted once per signal from the Firestore
+// subscription, never unmounted due to zoom, bbox, or region changes.
+//
+// tracksViewChanges lifecycle:
+//   true  on mount → lets the layout pass complete and the snapshot settle
+//   false after 500 ms → frozen native bitmap; no bridge work during zoom
+//
+// This is safe because SignalMarker uses pure Views (no Text / emoji / fonts).
+// Pure Views render synchronously in a single layout pass, so the 500 ms window
+// always captures a correct image.  tracksViewChanges=false then keeps it stable
+// across all zoom levels — nothing can blank it out.
+//
+// When isSelected changes, briefly re-enable to capture the updated visual.
+
+function PersistentSignalMarker({
+  signal, isSelected, onPress,
+}: {
+  signal: Signal
+  isSelected: boolean
+  onPress: () => void
+}) {
+  const [tracks, setTracks] = useState(true)
+  const prevSelected = useRef(isSelected)
+
+  // Initial mount: freeze snapshot after one layout pass (pure Views → instant)
+  React.useEffect(() => {
+    const t = setTimeout(() => setTracks(false), 500)
+    return () => clearTimeout(t)
+  }, [])
+
+  // Selection toggle: briefly re-enable to capture selected/deselected visual
+  React.useEffect(() => {
+    if (prevSelected.current === isSelected) return
+    prevSelected.current = isSelected
+    setTracks(true)
+    const t = setTimeout(() => setTracks(false), 300)
+    return () => clearTimeout(t)
+  }, [isSelected])
+
+  return (
+    <Marker
+      coordinate={{ latitude: signal.lat, longitude: signal.lng }}
+      anchor={{ x: 0.5, y: 0.5 }}
+      tracksViewChanges={tracks}
+      onPress={onPress}
+    >
+      <SignalMarker signal={signal} selected={isSelected} />
+    </Marker>
+  )
+}
 
 const clusterStyles = StyleSheet.create({
   ring: {

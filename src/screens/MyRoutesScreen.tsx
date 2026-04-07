@@ -13,6 +13,7 @@ import { useProfileStore } from '../store/profileStore'
 import { seedPlaces } from '../data/seedPlaces'
 import { UserRoute } from '../types/userRoute'
 import { Colors } from '../constants/colors'
+import { DaySegmentView, hasDayStructure } from '../components/DaySegmentView'
 
 // ── Screen ────────────────────────────────────────────────────────────────────
 
@@ -103,7 +104,11 @@ export default function MyRoutesScreen() {
             <RouteCard
               route={item}
               allPlaces={allPlaces}
-              onPress={() => router.push(`/user-route/${item.id}`)}
+              onPress={() =>
+                item.status === 'PUBLISHED'
+                  ? router.push(`/route-view/${item.id}` as any)
+                  : router.push(`/user-route/${item.id}`)
+              }
               onDelete={() => handleDelete(item)}
               onPublish={() => {
                 const name = user?.name ?? user?.email?.split('@')[0] ?? 'Anonymous Sailor'
@@ -144,7 +149,8 @@ function RouteCard({
   onUnpublish: () => void
   onToggleVisibility: () => void
 }) {
-  const [showActions, setShowActions] = React.useState(false)
+  const [showActions,  setShowActions]  = React.useState(false)
+  const [showSegments, setShowSegments] = React.useState(false)
   const { preferences } = useProfileStore()
   const distLabel = preferences.distanceUnit === 'km'
     ? `${Math.round(route.totalNm * 1.852)} km`
@@ -155,6 +161,7 @@ function RouteCard({
   const createdDate = new Date(route.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
 
   return (
+    <View style={styles.cardWrap}>
     <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.88}>
       {/* Status accent */}
       <View style={[styles.cardAccent, { backgroundColor: route.status === 'PUBLISHED' ? Colors.success : Colors.secondary }]} />
@@ -186,34 +193,50 @@ function RouteCard({
         {/* Title */}
         <Text style={styles.cardTitle} numberOfLines={1}>{route.title}</Text>
 
-        {/* From → To */}
-        {firstPlace && lastPlace && firstPlace.id !== lastPlace.id && (
-          <View style={styles.routeRow}>
-            <Text style={styles.routeFrom} numberOfLines={1}>{firstPlace.name}</Text>
-            <Ionicons name="arrow-forward" size={12} color={Colors.textMuted} />
-            <Text style={styles.routeTo} numberOfLines={1}>{lastPlace.name}</Text>
-          </View>
-        )}
-
-        {/* Stats */}
+        {/* Route summary — stats row */}
         <View style={styles.statsRow}>
-          <View style={styles.statItem}>
-            <Ionicons name="location-outline" size={13} color={Colors.primary} />
-            <Text style={styles.statText}>{route.stops.length} stops</Text>
-          </View>
           {route.totalNm > 0 && (
             <View style={styles.statItem}>
-              <Ionicons name="navigate-outline" size={13} color={Colors.primary} />
+              <Ionicons name="navigate-outline" size={13} color={Colors.secondary} />
               <Text style={styles.statText}>{distLabel}</Text>
             </View>
           )}
           {(route.estimatedDays ?? 0) > 0 && (
             <View style={styles.statItem}>
-              <Ionicons name="calendar-outline" size={13} color={Colors.primary} />
+              <Ionicons name="calendar-outline" size={13} color={Colors.secondary} />
               <Text style={styles.statText}>{route.estimatedDays} days</Text>
             </View>
           )}
+          <View style={styles.statItem}>
+            <Ionicons name="location-outline" size={13} color={Colors.secondary} />
+            <Text style={styles.statText}>{route.stops.length} stops</Text>
+          </View>
         </View>
+
+        {/* Segment toggle — only for routes with day structure */}
+        {hasDayStructure(route) && (
+          <TouchableOpacity
+            style={styles.segmentToggle}
+            onPress={() => { setShowSegments((v) => !v); setShowActions(false) }}
+            activeOpacity={0.75}
+          >
+            <Ionicons
+              name={showSegments ? 'chevron-up' : 'map-outline'}
+              size={13}
+              color={Colors.secondary}
+            />
+            <Text style={styles.segmentToggleText}>
+              {showSegments ? 'Hide plan' : 'View route plan'}
+            </Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Expandable segment view */}
+        {showSegments && hasDayStructure(route) && (
+          <View style={styles.segmentPanel}>
+            <DaySegmentView route={route} maxDays={5} />
+          </View>
+        )}
 
         {/* Footer */}
         <View style={styles.cardFooter}>
@@ -279,6 +302,7 @@ function RouteCard({
         )}
       </View>
     </TouchableOpacity>
+    </View>
   )
 }
 
@@ -333,11 +357,14 @@ const styles = StyleSheet.create({
 
   list: { padding: 16, gap: 12 },
 
-  // Card
-  card: {
-    backgroundColor: '#fff', borderRadius: 16, flexDirection: 'row', overflow: 'hidden',
+  // Card — shadow wrapper (no overflow so iOS shadow isn't clipped)
+  cardWrap: {
+    borderRadius: 16,
     shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.07, shadowRadius: 8, elevation: 3,
+  },
+  card: {
+    backgroundColor: '#fff', borderRadius: 16, flexDirection: 'row', overflow: 'hidden',
   },
   cardAccent: { width: 4 },
   cardContent: { flex: 1, padding: 14, gap: 6 },
@@ -357,7 +384,18 @@ const styles = StyleSheet.create({
   routeTo: { fontSize: 13, color: Colors.textSecondary, flex: 1, textAlign: 'right' },
   statsRow: { flexDirection: 'row', gap: 12, flexWrap: 'wrap' },
   statItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  statText: { fontSize: 13, color: Colors.textSecondary },
+  statText: { fontSize: 13, color: Colors.secondary, fontWeight: '500' },
+  segmentToggle: {
+    flexDirection: 'row', alignItems: 'center', gap: 5, alignSelf: 'flex-start',
+    paddingVertical: 5, paddingHorizontal: 10,
+    backgroundColor: Colors.secondary + '10', borderRadius: 20,
+    borderWidth: 1, borderColor: Colors.secondary + '25',
+  },
+  segmentToggleText: { fontSize: 12, color: Colors.secondary, fontWeight: '600' },
+  segmentPanel: {
+    marginTop: 4, paddingTop: 10,
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: Colors.border,
+  },
   cardFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 2 },
   cardRegion: { fontSize: 12, color: Colors.textMuted },
   cardDate: { fontSize: 12, color: Colors.textMuted },

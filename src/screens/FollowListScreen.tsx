@@ -279,11 +279,12 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row', alignItems: 'center',
     backgroundColor: '#fff', borderRadius: 14, padding: 14, gap: 12,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 2,
   },
   avatar: { width: 48, height: 48, borderRadius: 24, flexShrink: 0 },
   avatarPlaceholder: {
     width: 48, height: 48, borderRadius: 24,
-    backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+    backgroundColor: Colors.secondary + '15', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
   },
   info: { flex: 1, gap: 2 },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
@@ -297,7 +298,7 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
   followingBtn: {
-    backgroundColor: '#EFF6FF',
+    backgroundColor: Colors.secondary + '12',
     borderWidth: 1.5, borderColor: Colors.secondary,
   },
   followBtnText: { fontSize: 13, fontWeight: '700', color: '#fff' },

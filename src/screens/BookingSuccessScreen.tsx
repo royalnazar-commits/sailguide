@@ -31,7 +31,7 @@ export default function BookingSuccessScreen() {
   return (
     <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom + 24 }]}>
       <View style={styles.iconWrap}>
-        <Ionicons name="checkmark-circle" size={72} color={Colors.accent ?? '#00B4D8'} />
+        <Ionicons name="checkmark-circle" size={72} color={Colors.success} />
       </View>
 
       <Text style={styles.title}>Booking Confirmed!</Text>
@@ -103,10 +103,17 @@ const styles = StyleSheet.create({
   },
   card: {
     width: '100%',
-    backgroundColor: Colors.surface ?? '#1A2332',
-    borderRadius: 14,
+    backgroundColor: Colors.surface,
+    borderRadius: 16,
     padding: 18,
     gap: 4,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.07,
+    shadowRadius: 8,
+    elevation: 3,
   },
   note: {
     fontSize: 13,
@@ -119,7 +126,7 @@ const styles = StyleSheet.create({
   button: {
     marginTop: 'auto',
     width: '100%',
-    backgroundColor: Colors.accent ?? '#00B4D8',
+    backgroundColor: Colors.primary,
     borderRadius: 14,
     paddingVertical: 16,
     alignItems: 'center',

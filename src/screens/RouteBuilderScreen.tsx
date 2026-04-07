@@ -1,18 +1,18 @@
 import React, { useRef, useState, useCallback, useEffect, useMemo } from 'react'
 import {
   View, Text, StyleSheet, TouchableOpacity, TextInput,
-  Alert, Animated, PanResponder, FlatList, Dimensions,
+  Alert, Animated, PanResponder, Dimensions,
   Modal, KeyboardAvoidingView, Platform, ScrollView,
 } from 'react-native'
 import MapView, { Marker } from 'react-native-maps'
 import { MaritimePolyline } from '../components/MaritimePolyline'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { useSafeAreaInsets, SafeAreaView } from 'react-native-safe-area-context'
 import { router } from 'expo-router'
 import { Ionicons } from '@expo/vector-icons'
 import { useRouteBuilderStore } from '../store/routeBuilderStore'
 import { useMapMarkersStore } from '../store/mapMarkersStore'
 import { MapMarker, MapMarkerCategory } from '../types/mapMarker'
-import { UserRouteStop } from '../types/userRoute'
+import { UserRouteDayDetail, UserRouteStop, StayType } from '../types/userRoute'
 import { Colors } from '../constants/colors'
 import { seedPlaces } from '../data/seedPlaces'
 import { usePlacesStore } from '../store/placesStore'
@@ -113,10 +113,7 @@ function legNm(lat1: number, lng1: number, lat2: number, lng2: number): number {
 
 // ── Screen ─────────────────────────────────────────────────────────────────────
 
-// ── Module-level camera persistence ──────────────────────────────────────────
-// Initialised from the shared region so the builder opens wherever the user
-// was on the Explore map.  Updated on every onRegionChangeComplete.
-let _lastBuilderRegion = sharedMapRegion
+// (no module-level region cache — always read sharedMapRegion fresh at mount)
 
 export default function RouteBuilderScreen() {
   const insets = useSafeAreaInsets()
@@ -126,11 +123,24 @@ export default function RouteBuilderScreen() {
   const {
     draftRoute, addWaypoint, addWaypointToDay, removeStop, moveStop,
     updateDraftTitle, updateStopName, updateStopNotes, updateStopType,
-    saveDraft, discardDraft, autoSplitDays, updateStopDayIndex,
+    saveDraft, discardDraft, resetRouteBuilder, createNewRouteDraft, autoSplitDays, updateStopDayIndex,
+    updateDayDetail,
   } = useRouteBuilderStore()
 
   const { markers, addMarker, updateMarker, removeMarker, loadMarkers } = useMapMarkersStore()
   useEffect(() => { loadMarkers() }, [])
+
+  // Safety net: if draft is missing (unexpected entry path), create one.
+  // Primary initialization happens synchronously in the caller before push.
+  useEffect(() => {
+    console.log('[RouteBuilder] mount — initialRegion (from sharedMapRegion):', mapRegionRef.current)
+    if (!useRouteBuilderStore.getState().draftRoute) {
+      console.log('[RouteBuilder] mount — no draft found, creating safety-net draft')
+      createNewRouteDraft()
+    } else {
+      console.log('[RouteBuilder] mount — draft present:', useRouteBuilderStore.getState().draftRoute!.id)
+    }
+  }, [])
 
   const { userPlaces } = usePlacesStore()
   const allPlaces = useMemo(() => [...seedPlaces, ...userPlaces], [userPlaces])
@@ -191,7 +201,8 @@ export default function RouteBuilderScreen() {
   // ── Map region tracking ───────────────────────────────────────────────────
   // Tracks the full region (including latitudeDelta) to compute the exact
   // coordinate under the crosshair, which is offset from the map centre.
-  const mapRegionRef = useRef(_lastBuilderRegion)
+  // Always read sharedMapRegion at component mount — guaranteed fresh from Explore
+  const mapRegionRef = useRef(sharedMapRegion)
 
   // ── Crosshair geometry ────────────────────────────────────────────────────
   // True centre of the visible map area (between header and sheet collar).
@@ -577,7 +588,13 @@ export default function RouteBuilderScreen() {
   const handleDiscard = () => {
     Alert.alert('Discard Route?', 'All unsaved changes will be lost.', [
       { text: 'Keep Editing', style: 'cancel' },
-      { text: 'Discard', style: 'destructive', onPress: () => { discardDraft(); router.back() } },
+      {
+        text: 'Discard', style: 'destructive', onPress: () => {
+          resetRouteBuilder()
+          console.log('[RouteBuilder] Discard pressed — state wiped')
+          router.back()
+        },
+      },
     ])
   }
 
@@ -594,23 +611,16 @@ export default function RouteBuilderScreen() {
   const isFirstRoute  = showRouteHint  && phase === 'define_start' && stops.length === 0
   const isFirstPlaces = showPlacesHint && mapMode === 'places' && markers.length === 0
 
-  // ── No-draft guard ────────────────────────────────────────────────────────
-
-  if (!draftRoute) {
-    return (
-      <View style={[s.center, { paddingTop: insets.top }]}>
-        <Text style={s.centerText}>No active draft. Go back and start a new route.</Text>
-        <TouchableOpacity onPress={() => router.back()} style={s.backBtn}>
-          <Text style={s.backBtnText}>Go Back</Text>
-        </TouchableOpacity>
-      </View>
-    )
-  }
+  // ── Null guard — draftRoute may be null on the very first render
+  // (useEffect hasn't fired yet). Caller always creates a draft synchronously
+  // before push, so this is only a safety net for unexpected entry paths.
+  if (!draftRoute) return null
 
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <View style={s.root}>
+    <SafeAreaView style={s.root} edges={[]}>
+
 
       {/* ── Map mode: map + overlays ──────────────────────────────── */}
       {builderMode === 'map' && (
@@ -618,10 +628,9 @@ export default function RouteBuilderScreen() {
           <MapView
             ref={mapRef}
             style={StyleSheet.absoluteFill}
-            initialRegion={_lastBuilderRegion}
+            initialRegion={mapRegionRef.current}
             onRegionChangeComplete={(r) => {
               mapRegionRef.current = r
-              _lastBuilderRegion = r
             }}
           >
             {/* Main route polyline (excludes ALT_END).
@@ -831,9 +840,11 @@ export default function RouteBuilderScreen() {
       {/* ── Plan mode view ─────────────────────────────────────────── */}
       {builderMode === 'plan' && (
         <ScrollView
-          style={[s.planContainer, { paddingTop: HEADER_H }]}
-          contentContainerStyle={{ paddingBottom: insets.bottom + 40, paddingHorizontal: 16, paddingTop: 16 }}
+          style={s.planContainer}
+          contentContainerStyle={{ paddingBottom: insets.bottom + 140, paddingHorizontal: 16, paddingTop: HEADER_H + 16 }}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
         >
           {/* Auto-split control */}
           <View style={s.planAutoSplitRow}>
@@ -860,107 +871,32 @@ export default function RouteBuilderScreen() {
             </View>
           )}
 
-          {/* Day cards */}
-          {dayGroups.map((group) => {
-            const dayColor = STOP_COLORS[group.day % STOP_COLORS.length]
-            return (
-              <View key={group.day} style={s.dayCard}>
-                {/* Day card header */}
-                <View style={[s.dayCardHeader, { backgroundColor: dayColor + '18', borderColor: dayColor + '35' }]}>
-                  <View style={[s.dayCardDot, { backgroundColor: dayColor }]} />
-                  <Text style={[s.dayCardTitle, { color: dayColor }]}>Day {group.day + 1}</Text>
-                  {group.nm > 0 && (
-                    <Text style={[s.dayCardNm, { color: dayColor }]}>{group.nm} nm</Text>
-                  )}
-                  <Text style={[s.dayCardCount, { color: dayColor + 'AA' }]}>
-                    {(() => {
-                      const n = group.stops.filter(s => s.type !== 'ALT_END').length
-                      return `${n} stop${n !== 1 ? 's' : ''}`
-                    })()}
-                  </Text>
-                </View>
-
-                {/* Stops in this day */}
-                {group.stops.map((stop, idx) => {
-                  const globalIdx = stops.findIndex((s2) => s2.id === stop.id)
-                  const nextInDay = group.stops[idx + 1]
-                  const legDist = (stop.lat != null && stop.lng != null && nextInDay?.lat != null && nextInDay?.lng != null)
-                    ? legNm(stop.lat, stop.lng, nextInDay.lat, nextInDay.lng) : null
-                  const typeColor = stop.type === 'DAY_START' ? '#22C55E'
-                    : stop.type === 'DAY_END' ? '#1B6CA8'
-                    : stop.type === 'ALT_END' ? '#F97316'
-                    : (stop.type && stop.type !== 'CUSTOM' ? TYPE_COLOR[stop.type] : Colors.textMuted)
-                  const typeLabel = stop.type === 'DAY_START' ? 'Departure'
-                    : stop.type === 'DAY_END' ? 'Destination'
-                    : stop.type === 'ALT_END' ? 'Alt. Destination'
-                    : (STOP_TYPE_OPTIONS.find((o) => o.type === (stop.type ?? 'CUSTOM'))?.label ?? 'Stop')
-                  // Only show leg distance between main route points (not to/from stops or alt)
-                  const showLeg = stop.type === 'DAY_START' && nextInDay?.type === 'DAY_END'
-
-                  return (
-                    <View key={stop.id} style={s.planStopRow}>
-                      {/* Left: sequence dot + connector */}
-                      <View style={s.planSeqCol}>
-                        <View style={[s.dot, { backgroundColor: STOP_COLORS[globalIdx % STOP_COLORS.length] }]}>
-                          <Text style={s.dotText}>{globalIdx + 1}</Text>
-                        </View>
-                        {idx < group.stops.length - 1 && <View style={s.connector} />}
-                      </View>
-
-                      {/* Right: stop info + actions */}
-                      <View style={s.planStopCard}>
-                        <View style={s.planStopCardRow}>
-                          <TouchableOpacity style={{ flex: 1 }} onPress={() => openStopEditor(stop, globalIdx)} activeOpacity={0.7}>
-                            <Text style={s.stopName} numberOfLines={1}>{stop.name ?? `Stop ${globalIdx + 1}`}</Text>
-                            <View style={[s.typeBadge, { backgroundColor: typeColor + '20' }]}>
-                              <View style={[s.typeDot, { backgroundColor: typeColor }]} />
-                              <Text style={[s.typeBadgeText, { color: typeColor }]}>{typeLabel}</Text>
-                            </View>
-                          </TouchableOpacity>
-                          <View style={{ flexDirection: 'row', gap: 4 }}>
-                            <TouchableOpacity
-                              style={s.planStopAction}
-                              onPress={() => openStopEditor(stop, globalIdx)}
-                              activeOpacity={0.75}
-                            >
-                              <Ionicons name="pencil-outline" size={14} color={Colors.textSecondary} />
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                              style={s.planStopAction}
-                              onPress={() => {
-                                const dayOptions = Array.from({ length: Math.max(...stops.map((s2) => s2.dayIndex ?? 0)) + 2 }, (_, i) => i)
-                                  .filter((d) => d !== (stop.dayIndex ?? 0))
-                                Alert.alert(
-                                  'Move to Day',
-                                  `Move "${stop.name ?? `Stop ${globalIdx + 1}`}" to:`,
-                                  [
-                                    ...dayOptions.map((d) => ({
-                                      text: `Day ${d + 1}`,
-                                      onPress: () => updateStopDayIndex(stop.id, d),
-                                    })),
-                                    { text: 'Cancel', style: 'cancel' as const },
-                                  ]
-                                )
-                              }}
-                              activeOpacity={0.75}
-                            >
-                              <Ionicons name="swap-vertical-outline" size={14} color={Colors.textSecondary} />
-                            </TouchableOpacity>
-                          </View>
-                        </View>
-                        {showLeg && legDist !== null && (
-                          <View style={s.legRow}>
-                            <Ionicons name="arrow-down" size={10} color={Colors.textMuted} />
-                            <Text style={s.legText}>{legDist} nm</Text>
-                          </View>
-                        )}
-                      </View>
-                    </View>
-                  )
-                })}
-              </View>
-            )
-          })}
+          {/* Day segments — each day rendered as A→stops→B segment card */}
+          {dayGroups.map((group) => (
+            <DaySegmentCard
+              key={group.day}
+              group={group}
+              allStops={stops}
+              dayColor={STOP_COLORS[group.day % STOP_COLORS.length]}
+              dayDetail={draftRoute?.dayDetails?.[group.day]}
+              onEdit={openStopEditor}
+              onDelete={(stopId) => removeStop(stopId, () => null)}
+              onMoveDay={(stopId, targetDay) => updateStopDayIndex(stopId, targetDay)}
+              onUpdateDayDetail={(detail) => updateDayDetail(group.day, detail)}
+            />
+          ))}
+          {/* Publish CTA — full-width primary action at bottom of plan */}
+          {canSave ? (
+            <TouchableOpacity style={s.publishCTA} onPress={handleSave} activeOpacity={0.86}>
+              <Ionicons name="checkmark-circle" size={20} color="#fff" />
+              <Text style={s.publishCTAText}>Save Route</Text>
+            </TouchableOpacity>
+          ) : stops.length > 0 ? (
+            <View style={s.publishCTAHint}>
+              <Ionicons name="information-circle-outline" size={15} color={Colors.textMuted} />
+              <Text style={s.publishCTAHintText}>Set at least one departure and destination to save</Text>
+            </View>
+          ) : null}
         </ScrollView>
       )}
 
@@ -1343,38 +1279,31 @@ export default function RouteBuilderScreen() {
             </View>
           )}
 
-          {/* List */}
+          {/* List — plain View + map() to avoid nested vertical scroll conflicts */}
           {mapMode === 'route' ? (
-            <FlatList
-              data={stops}
-              keyExtractor={(item) => item.id}
-              contentContainerStyle={[s.listContent, { paddingBottom: insets.bottom + 16 }]}
-              showsVerticalScrollIndicator={false}
-              ListEmptyComponent={
+            <View style={[s.listContent, { paddingHorizontal: 14, paddingBottom: insets.bottom + 16 }]}>
+              {stops.length === 0 ? (
                 <View style={s.emptyList}>
                   <Ionicons name="navigate-circle-outline" size={32} color={Colors.textMuted} />
                   <Text style={s.emptyTitle}>No waypoints yet</Text>
                   <Text style={s.emptySub}>Pan the map to your first stop, then tap Set Departure</Text>
                 </View>
-              }
-              renderItem={({ item: stop, index: i }) => (
-                <StopRow
-                  stop={stop} index={i} total={stops.length}
-                  onEdit={() => openStopEditor(stop, i)}
-                  onMoveUp={() => moveStop(i, i - 1, () => null)}
-                  onMoveDown={() => moveStop(i, i + 1, () => null)}
-                  onRemove={() => removeStop(stop.id, () => null)}
-                  nextStop={stops[i + 1]}
+              ) : dayGroups.map((group) => (
+                <DaySegmentCard
+                  key={group.day}
+                  group={group}
+                  allStops={stops}
+                  dayColor={STOP_COLORS[group.day % STOP_COLORS.length]}
+                  dayDetail={draftRoute?.dayDetails?.[group.day]}
+                  onEdit={openStopEditor}
+                  onDelete={(stopId) => removeStop(stopId, () => null)}
+                  onUpdateDayDetail={(detail) => updateDayDetail(group.day, detail)}
                 />
-              )}
-            />
+              ))}
+            </View>
           ) : (
-            <FlatList
-              data={visibleMarkers}
-              keyExtractor={(item) => item.id}
-              contentContainerStyle={[s.listContent, { paddingBottom: insets.bottom + 16 }]}
-              showsVerticalScrollIndicator={false}
-              ListEmptyComponent={
+            <View style={[s.listContent, { paddingBottom: insets.bottom + 16 }]}>
+              {visibleMarkers.length === 0 ? (
                 <View style={s.emptyList}>
                   <Ionicons name="bookmark-outline" size={32} color={Colors.textMuted} />
                   <Text style={s.emptyTitle}>
@@ -1382,15 +1311,15 @@ export default function RouteBuilderScreen() {
                   </Text>
                   <Text style={s.emptySub}>Pan to a spot you want to remember, then tap Add Place</Text>
                 </View>
-              }
-              renderItem={({ item: marker }) => (
-                <MarkerRow marker={marker} onPress={() => openMarkerViewer(marker)} />
-              )}
-            />
+              ) : visibleMarkers.map((marker) => (
+                <MarkerRow key={marker.id} marker={marker} onPress={() => openMarkerViewer(marker)} />
+              ))}
+            </View>
           )}
         </View>
       </Animated.View>
       )}
+
 
       {/* ── Route stop editor modal ───────────────────────────────── */}
       <Modal visible={editingStopId !== null} transparent animationType="slide" onRequestClose={handleEditStopDone}>
@@ -1561,9 +1490,137 @@ export default function RouteBuilderScreen() {
           )}
         </KeyboardAvoidingView>
       </Modal>
-    </View>
+    </SafeAreaView>
   )
 }
+
+// ── DaySegmentCard styles ─────────────────────────────────────────────────────
+
+const seg = StyleSheet.create({
+  card: {
+    backgroundColor: '#fff', borderRadius: 16, marginBottom: 14, overflow: 'hidden',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.07, shadowRadius: 8, elevation: 3,
+  },
+
+  // Header strip
+  segHeader: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingHorizontal: 14, paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: Colors.border,
+    borderLeftWidth: 3,
+  },
+  dayTag: { borderRadius: 20, paddingHorizontal: 10, paddingVertical: 3 },
+  dayTagText: { fontSize: 12, fontWeight: '700' },
+  nmTag: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  nmText: { fontSize: 12, color: Colors.textSecondary, fontWeight: '600' },
+  stopCount: { fontSize: 12, color: Colors.textMuted, marginLeft: 'auto' as any },
+
+  // Anchor rows (departure / destination)
+  anchorRow: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 10,
+    paddingHorizontal: 14, paddingVertical: 10,
+  },
+  anchorDot: {
+    width: 28, height: 28, borderRadius: 14,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 2, flexShrink: 0,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.15, shadowRadius: 3, elevation: 2,
+  },
+  anchorBody: { flex: 1, paddingTop: 2 },
+  anchorName: { fontSize: 14, fontWeight: '700', color: Colors.text, marginBottom: 4 },
+  anchorBadge: { borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2, alignSelf: 'flex-start' },
+  anchorBadgeText: { fontSize: 11, fontWeight: '600' },
+
+  // Timeline column (shared by anchors and stops)
+  timelineCol: { width: 28, alignItems: 'center', flexShrink: 0 },
+  timelineLine: { width: 2, flex: 1, minHeight: 14, marginTop: 2, borderRadius: 1 },
+
+  // Intermediate stop rows (slightly inset background)
+  stopRow: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 10,
+    paddingLeft: 14, paddingRight: 10, paddingVertical: 8,
+    backgroundColor: '#F8FAFC',
+  },
+  stopDot: {
+    width: 14, height: 14, borderRadius: 7, flexShrink: 0, marginTop: 4,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.10, shadowRadius: 2,
+  },
+  stopBody: { flex: 1 },
+  stopName: { fontSize: 13, fontWeight: '600', color: Colors.text, marginBottom: 3 },
+  stopTypeBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2, alignSelf: 'flex-start',
+  },
+  stopTypeDot: { width: 5, height: 5, borderRadius: 3 },
+  stopTypeText: { fontSize: 11, fontWeight: '600' },
+  stopActions: { flexDirection: 'row', alignItems: 'center' },
+
+  // Alt destination row
+  altRow: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 10,
+    paddingHorizontal: 14, paddingVertical: 10,
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#F9731628',
+    backgroundColor: '#FFF8F5',
+  },
+  altIconCol: { width: 28, alignItems: 'center', flexShrink: 0 },
+  altIcon: {
+    width: 28, height: 28, borderRadius: 14,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: '#F9731614', borderWidth: 1.5, borderColor: '#F9731640',
+  },
+  altName: { fontSize: 13, fontWeight: '600', color: Colors.text, marginBottom: 4 },
+
+  // Incomplete day message
+  incompleteRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingHorizontal: 14, paddingVertical: 10,
+    backgroundColor: '#F8FAFC',
+  },
+  incompleteText: { fontSize: 12, color: Colors.textMuted, flex: 1, lineHeight: 17 },
+
+  iconBtn: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
+
+  // Day details collapsible
+  detailsToggle: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 14, paddingVertical: 10,
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: Colors.border,
+  },
+  detailsToggleText: { fontSize: 13, color: Colors.textMuted, flex: 1 },
+  detailsPanel: {
+    paddingHorizontal: 14, paddingBottom: 14,
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: Colors.border,
+    backgroundColor: '#FAFBFC',
+  },
+  detailLabel: { fontSize: 12, fontWeight: '600', color: Colors.textSecondary, marginTop: 12, marginBottom: 6 },
+  detailInput: {
+    borderWidth: StyleSheet.hairlineWidth, borderColor: Colors.border,
+    borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8,
+    fontSize: 13, color: Colors.text, backgroundColor: '#fff',
+    textAlignVertical: 'top', minHeight: 72,
+  },
+  stayRow: { flexDirection: 'row', gap: 8 },
+  stayChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6,
+    borderWidth: 1, borderColor: Colors.border, backgroundColor: '#fff',
+  },
+  stayChipText: { fontSize: 12, fontWeight: '600', color: Colors.textMuted },
+  tagRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingVertical: 5, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: Colors.border,
+  },
+  tagText: { flex: 1, fontSize: 13, color: Colors.text },
+  addRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6,
+  },
+  addInput: {
+    flex: 1, borderWidth: StyleSheet.hairlineWidth, borderColor: Colors.border,
+    borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6,
+    fontSize: 13, color: Colors.text, backgroundColor: '#fff',
+  },
+})
 
 // ── CrosshairIndicator ────────────────────────────────────────────────────────
 
@@ -1752,6 +1809,347 @@ function StopRow({ stop, index: i, total, onEdit, onMoveUp, onMoveDown, onRemove
   )
 }
 
+// ── DaySegmentCard ────────────────────────────────────────────────────────────
+//
+// Renders a single day as a SEGMENT (A → stops → B) instead of a flat list.
+// Only used in the route editor — does not touch any shared/public route views.
+
+interface DaySegmentCardProps {
+  group: { day: number; stops: UserRouteStop[]; nm: number }
+  allStops: UserRouteStop[]
+  dayColor: string
+  dayDetail?: UserRouteDayDetail
+  onEdit: (stop: UserRouteStop, globalIdx: number) => void
+  onDelete: (stopId: string) => void
+  onMoveDay?: (stopId: string, targetDay: number) => void
+  onUpdateDayDetail?: (detail: Partial<UserRouteDayDetail>) => void
+}
+
+const STAY_TYPES: { type: StayType; label: string; icon: string }[] = [
+  { type: 'marina',    label: 'Marina',     icon: 'boat'              },
+  { type: 'anchorage', label: 'Anchorage',  icon: 'anchor'            },
+  { type: 'custom',    label: 'Custom',     icon: 'location'          },
+]
+
+function DaySegmentCard({ group, allStops, dayColor, dayDetail, onEdit, onDelete, onMoveDay, onUpdateDayDetail }: DaySegmentCardProps) {
+  const [detailsOpen, setDetailsOpen] = useState(false)
+  const [newHighlight, setNewHighlight] = useState('')
+  const [newWarning, setNewWarning] = useState('')
+  const departure    = group.stops.find((s) => s.type === 'DAY_START')
+  const destination  = group.stops.find((s) => s.type === 'DAY_END')
+  const intermediate = group.stops.filter((s) => s.type !== 'DAY_START' && s.type !== 'DAY_END' && s.type !== 'ALT_END')
+  const alt          = group.stops.find((s) => s.type === 'ALT_END')
+
+  // Day 2+ inherits its departure from the previous day's destination
+  const inheritedDeparture = !departure && group.day > 0
+    ? allStops.find((s) => (s.dayIndex ?? 0) === group.day - 1 && s.type === 'DAY_END')
+    : undefined
+  const effectiveDeparture = departure ?? inheritedDeparture
+
+  const maxDay = allStops.length > 0 ? Math.max(...allStops.map((s) => s.dayIndex ?? 0)) : 0
+
+  const handleMoveDay = (stop: UserRouteStop) => {
+    if (!onMoveDay) return
+    const options = Array.from({ length: maxDay + 2 }, (_, i) => i).filter((d) => d !== (stop.dayIndex ?? 0))
+    Alert.alert(
+      'Move to Day',
+      `Move "${stop.name ?? 'Stop'}" to:`,
+      [
+        ...options.map((d) => ({ text: `Day ${d + 1}`, onPress: () => onMoveDay(stop.id, d) })),
+        { text: 'Cancel', style: 'cancel' as const },
+      ],
+    )
+  }
+
+  return (
+    <View style={seg.card}>
+      {/* Segment header: day label + nm + stop count */}
+      <View style={[seg.segHeader, { borderLeftColor: dayColor }]}>
+        <View style={[seg.dayTag, { backgroundColor: dayColor + '18' }]}>
+          <Text style={[seg.dayTagText, { color: dayColor }]}>Day {group.day + 1}</Text>
+        </View>
+        {group.nm > 0 && (
+          <View style={seg.nmTag}>
+            <Ionicons name="navigate-outline" size={10} color={Colors.textSecondary} />
+            <Text style={seg.nmText}>{group.nm} nm</Text>
+          </View>
+        )}
+        {intermediate.length > 0 && (
+          <Text style={seg.stopCount}>
+            {intermediate.length} stop{intermediate.length !== 1 ? 's' : ''}
+          </Text>
+        )}
+      </View>
+
+      {/* ── DEPARTURE (A) ── */}
+      {effectiveDeparture && (
+        <View style={seg.anchorRow}>
+          <View style={seg.timelineCol}>
+            <View style={[seg.anchorDot, { backgroundColor: '#22C55E', borderColor: '#22C55E40' }]}>
+              <Ionicons name="boat-outline" size={11} color="#fff" />
+            </View>
+            {(intermediate.length > 0 || destination) && (
+              <View style={[seg.timelineLine, { backgroundColor: dayColor + '35' }]} />
+            )}
+          </View>
+          <View style={seg.anchorBody}>
+            <Text style={seg.anchorName} numberOfLines={1}>
+              {effectiveDeparture.name ?? 'Departure'}
+            </Text>
+            <View style={[seg.anchorBadge, { backgroundColor: '#22C55E14' }]}>
+              <Text style={[seg.anchorBadgeText, { color: '#22C55E' }]}>
+                {inheritedDeparture ? `Continuing · Day ${group.day}` : 'Departure'}
+              </Text>
+            </View>
+          </View>
+          {departure && (
+            <TouchableOpacity
+              style={seg.iconBtn}
+              onPress={() => onEdit(departure, allStops.findIndex((s) => s.id === departure.id))}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="pencil-outline" size={14} color={Colors.textMuted} />
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
+
+      {/* ── INTERMEDIATE STOPS (nested, lighter) ── */}
+      {intermediate.map((stop, i) => {
+        const globalIdx = allStops.findIndex((s) => s.id === stop.id)
+        const stopColor = TYPE_COLOR[stop.type ?? 'CUSTOM'] ?? Colors.textMuted
+        const typeLabel = STOP_TYPE_OPTIONS.find((o) => o.type === (stop.type ?? 'CUSTOM'))?.label ?? 'Stop'
+        const isLast    = i === intermediate.length - 1
+        return (
+          <View key={stop.id} style={seg.stopRow}>
+            <View style={seg.timelineCol}>
+              <View style={[seg.stopDot, { backgroundColor: stopColor }]} />
+              {(!isLast || destination) && (
+                <View style={[seg.timelineLine, { backgroundColor: dayColor + '35' }]} />
+              )}
+            </View>
+            <View style={seg.stopBody}>
+              <Text style={seg.stopName} numberOfLines={1}>{stop.name ?? `Stop ${i + 1}`}</Text>
+              <View style={[seg.stopTypeBadge, { backgroundColor: stopColor + '18' }]}>
+                <View style={[seg.stopTypeDot, { backgroundColor: stopColor }]} />
+                <Text style={[seg.stopTypeText, { color: stopColor }]}>{typeLabel}</Text>
+              </View>
+            </View>
+            <View style={seg.stopActions}>
+              {onMoveDay && (
+                <TouchableOpacity style={seg.iconBtn} onPress={() => handleMoveDay(stop)} activeOpacity={0.7}>
+                  <Ionicons name="swap-vertical-outline" size={14} color={Colors.textMuted} />
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity style={seg.iconBtn} onPress={() => onEdit(stop, globalIdx)} activeOpacity={0.7}>
+                <Ionicons name="pencil-outline" size={14} color={Colors.textMuted} />
+              </TouchableOpacity>
+              <TouchableOpacity style={seg.iconBtn} onPress={() => onDelete(stop.id)} activeOpacity={0.7}>
+                <Ionicons name="trash-outline" size={14} color={Colors.danger + 'BB'} />
+              </TouchableOpacity>
+            </View>
+          </View>
+        )
+      })}
+
+      {/* ── DESTINATION (B) ── */}
+      {destination ? (
+        <View style={seg.anchorRow}>
+          <View style={seg.timelineCol}>
+            <View style={[seg.anchorDot, { backgroundColor: '#1B6CA8', borderColor: '#1B6CA840' }]}>
+              <Ionicons name="flag" size={11} color="#fff" />
+            </View>
+            {alt && <View style={[seg.timelineLine, { backgroundColor: '#F9731640' }]} />}
+          </View>
+          <View style={seg.anchorBody}>
+            <Text style={seg.anchorName} numberOfLines={1}>{destination.name ?? 'Destination'}</Text>
+            <View style={[seg.anchorBadge, { backgroundColor: '#1B6CA814' }]}>
+              <Text style={[seg.anchorBadgeText, { color: '#1B6CA8' }]}>Destination</Text>
+            </View>
+          </View>
+          <TouchableOpacity
+            style={seg.iconBtn}
+            onPress={() => onEdit(destination, allStops.findIndex((s) => s.id === destination.id))}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="pencil-outline" size={14} color={Colors.textMuted} />
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <View style={seg.incompleteRow}>
+          <Ionicons name="flag-outline" size={14} color={Colors.textMuted} />
+          <Text style={seg.incompleteText}>
+            Destination not set — switch to Map to complete this day
+          </Text>
+        </View>
+      )}
+
+      {/* ── ALT DESTINATION (branch) ── */}
+      {alt && (
+        <View style={seg.altRow}>
+          <View style={seg.altIconCol}>
+            <View style={seg.altIcon}>
+              <Ionicons name="git-branch-outline" size={13} color="#F97316" />
+            </View>
+          </View>
+          <View style={seg.anchorBody}>
+            <Text style={seg.altName} numberOfLines={1}>{alt.name ?? 'Backup Destination'}</Text>
+            <View style={[seg.anchorBadge, { backgroundColor: '#F9731614' }]}>
+              <Text style={[seg.anchorBadgeText, { color: '#F97316' }]}>Alt. Destination</Text>
+            </View>
+          </View>
+          <TouchableOpacity style={seg.iconBtn} onPress={() => onDelete(alt.id)} activeOpacity={0.7}>
+            <Ionicons name="trash-outline" size={14} color={Colors.danger + 'BB'} />
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* ── DAY DETAILS (collapsible) ── */}
+      {onUpdateDayDetail && (
+        <>
+          <TouchableOpacity
+            style={seg.detailsToggle}
+            onPress={() => setDetailsOpen((o) => !o)}
+            activeOpacity={0.75}
+          >
+            <Ionicons name="document-text-outline" size={13} color={Colors.textMuted} />
+            <Text style={seg.detailsToggleText}>Day details</Text>
+            <Ionicons
+              name={detailsOpen ? 'chevron-up' : 'chevron-down'}
+              size={13}
+              color={Colors.textMuted}
+            />
+          </TouchableOpacity>
+
+          {detailsOpen && (
+            <View style={seg.detailsPanel}>
+              {/* Description */}
+              <Text style={seg.detailLabel}>Description</Text>
+              <TextInput
+                style={seg.detailInput}
+                value={dayDetail?.description ?? ''}
+                onChangeText={(t) => onUpdateDayDetail({ description: t })}
+                placeholder="What makes this day special?"
+                placeholderTextColor={Colors.textMuted}
+                multiline
+                numberOfLines={3}
+                scrollEnabled={false}
+              />
+
+              {/* Stay type */}
+              <Text style={[seg.detailLabel, { marginTop: 12 }]}>Stay type</Text>
+              <View style={seg.stayRow}>
+                {STAY_TYPES.map(({ type, label, icon }) => {
+                  const active = dayDetail?.stayType === type
+                  return (
+                    <TouchableOpacity
+                      key={type}
+                      style={[seg.stayChip, active && { backgroundColor: dayColor + '22', borderColor: dayColor }]}
+                      onPress={() => onUpdateDayDetail({ stayType: active ? undefined : type })}
+                      activeOpacity={0.75}
+                    >
+                      <Ionicons name={icon as any} size={12} color={active ? dayColor : Colors.textMuted} />
+                      <Text style={[seg.stayChipText, active && { color: dayColor }]}>{label}</Text>
+                    </TouchableOpacity>
+                  )
+                })}
+              </View>
+
+              {/* Highlights */}
+              <Text style={[seg.detailLabel, { marginTop: 12 }]}>Highlights</Text>
+              {(dayDetail?.highlights ?? []).map((h, i) => (
+                <View key={i} style={seg.tagRow}>
+                  <Ionicons name="checkmark-circle-outline" size={13} color={Colors.success} />
+                  <Text style={seg.tagText} numberOfLines={1}>{h}</Text>
+                  <TouchableOpacity
+                    onPress={() => {
+                      const next = [...(dayDetail?.highlights ?? [])]
+                      next.splice(i, 1)
+                      onUpdateDayDetail({ highlights: next })
+                    }}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Ionicons name="close" size={13} color={Colors.textMuted} />
+                  </TouchableOpacity>
+                </View>
+              ))}
+              <View style={seg.addRow}>
+                <TextInput
+                  style={seg.addInput}
+                  value={newHighlight}
+                  onChangeText={setNewHighlight}
+                  placeholder="Add highlight…"
+                  placeholderTextColor={Colors.textMuted}
+                  returnKeyType="done"
+                  onSubmitEditing={() => {
+                    if (!newHighlight.trim()) return
+                    onUpdateDayDetail({ highlights: [...(dayDetail?.highlights ?? []), newHighlight.trim()] })
+                    setNewHighlight('')
+                  }}
+                />
+                <TouchableOpacity
+                  onPress={() => {
+                    if (!newHighlight.trim()) return
+                    onUpdateDayDetail({ highlights: [...(dayDetail?.highlights ?? []), newHighlight.trim()] })
+                    setNewHighlight('')
+                  }}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Ionicons name="add-circle" size={20} color={Colors.success} />
+                </TouchableOpacity>
+              </View>
+
+              {/* Warnings */}
+              <Text style={[seg.detailLabel, { marginTop: 12 }]}>Heads up</Text>
+              {(dayDetail?.warnings ?? []).map((w, i) => (
+                <View key={i} style={seg.tagRow}>
+                  <Ionicons name="warning-outline" size={13} color={Colors.warning} />
+                  <Text style={seg.tagText} numberOfLines={1}>{w}</Text>
+                  <TouchableOpacity
+                    onPress={() => {
+                      const next = [...(dayDetail?.warnings ?? [])]
+                      next.splice(i, 1)
+                      onUpdateDayDetail({ warnings: next })
+                    }}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Ionicons name="close" size={13} color={Colors.textMuted} />
+                  </TouchableOpacity>
+                </View>
+              ))}
+              <View style={seg.addRow}>
+                <TextInput
+                  style={seg.addInput}
+                  value={newWarning}
+                  onChangeText={setNewWarning}
+                  placeholder="Add heads up…"
+                  placeholderTextColor={Colors.textMuted}
+                  returnKeyType="done"
+                  onSubmitEditing={() => {
+                    if (!newWarning.trim()) return
+                    onUpdateDayDetail({ warnings: [...(dayDetail?.warnings ?? []), newWarning.trim()] })
+                    setNewWarning('')
+                  }}
+                />
+                <TouchableOpacity
+                  onPress={() => {
+                    if (!newWarning.trim()) return
+                    onUpdateDayDetail({ warnings: [...(dayDetail?.warnings ?? []), newWarning.trim()] })
+                    setNewWarning('')
+                  }}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Ionicons name="add-circle" size={20} color={Colors.warning} />
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+        </>
+      )}
+    </View>
+  )
+}
+
 // ── MarkerRow ─────────────────────────────────────────────────────────────────
 
 function MarkerRow({ marker, onPress }: { marker: MapMarker; onPress: () => void }) {
@@ -1777,10 +2175,6 @@ function MarkerRow({ marker, onPress }: { marker: MapMarker; onPress: () => void
 
 const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#1a1a2e' },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, backgroundColor: Colors.background },
-  centerText: { fontSize: 15, color: Colors.textSecondary, textAlign: 'center', marginBottom: 16 },
-  backBtn: { backgroundColor: Colors.primary, borderRadius: 12, paddingVertical: 10, paddingHorizontal: 24 },
-  backBtnText: { color: '#fff', fontWeight: '700' },
 
   // Header
   header: {
@@ -2015,9 +2409,25 @@ const s = StyleSheet.create({
   planEmpty: { alignItems: 'center', paddingTop: 40, gap: 10 },
   planGoMapBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: Colors.primary, borderRadius: 14, paddingHorizontal: 20, paddingVertical: 10, marginTop: 4,
+    backgroundColor: Colors.secondary, borderRadius: 20,
+    paddingVertical: 10, paddingHorizontal: 18, marginTop: 12,
   },
   planGoMapBtnText: { fontSize: 14, fontWeight: '700', color: '#fff' },
+
+  // Publish CTA (Plan mode bottom)
+  publishCTA: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    backgroundColor: Colors.primary, borderRadius: 16, paddingVertical: 16,
+    marginTop: 8, marginBottom: 8,
+    shadowColor: Colors.primary,
+    shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.28, shadowRadius: 12, elevation: 8,
+  },
+  publishCTAText: { fontSize: 16, fontWeight: '800', color: '#fff', letterSpacing: 0.3 },
+  publishCTAHint: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    justifyContent: 'center', paddingVertical: 14,
+  },
+  publishCTAHintText: { fontSize: 13, color: Colors.textMuted },
 
   // Day cards
   dayCard: { marginBottom: 16 },

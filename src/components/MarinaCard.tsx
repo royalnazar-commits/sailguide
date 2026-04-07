@@ -1,5 +1,6 @@
 import React from 'react'
 import { View, Text, StyleSheet } from 'react-native'
+import { Colors } from '../constants/colors'
 
 type Marina = {
   id?: string
@@ -63,11 +64,12 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 18,
     fontWeight: '700',
+    color: Colors.text,
     marginBottom: 8,
   },
   text: {
     fontSize: 14,
-    color: '#444',
+    color: Colors.textSecondary,
     marginBottom: 4,
   },
 })

@@ -54,7 +54,7 @@ const styles = StyleSheet.create({
   avatar: { width: 44, height: 44, borderRadius: 22 },
   avatarPlaceholder: {
     width: 44, height: 44, borderRadius: 22,
-    backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center',
+    backgroundColor: Colors.secondary + '15', alignItems: 'center', justifyContent: 'center',
   },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   name: { fontSize: 15, fontWeight: '600', color: Colors.text },

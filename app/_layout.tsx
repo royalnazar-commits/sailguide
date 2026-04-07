@@ -13,7 +13,8 @@ import { useConditionsStore } from '../src/store/conditionsStore'
 import { useContributorStore } from '../src/store/contributorStore'
 import { useCaptainStore } from '../src/store/captainStore'
 import { useSocialStore } from '../src/store/socialStore'
-import { RewardToast } from '../src/components/RewardToast'
+import { useRouteInteractionStore } from '../src/store/routeInteractionStore'
+import { AchievementModal } from '../src/components/AchievementModal'
 import { saveUserProfile } from '../src/lib/userService'
 
 const queryClient = new QueryClient({
@@ -33,12 +34,13 @@ export default function RootLayout() {
   const savedRoutes      = useRouteBuilderStore((s) => s.savedRoutes)
   const loadConditions   = useConditionsStore((s) => s.loadReports)
   const loadContributor  = useContributorStore((s) => s.loadContributor)
-  const totalPoints      = useContributorStore((s) => s.totalPoints)
+  const totalPoints      = useContributorStore((s) => s.contributionScore)
   const loadCaptainData  = useCaptainStore((s) => s.loadCaptainData)
   const loadSocial       = useSocialStore((s) => s.load)
+  const loadInteractions = useRouteInteractionStore((s) => s.load)
   const syncedUserIdRef  = useRef<string | null>(null)
 
-  useEffect(() => { loadAuth(); loadProfile(); loadPlaces(); initLocalUser(); loadComments(); loadRoutes(); loadConditions(); loadContributor(); loadCaptainData(); loadSocial() }, [])
+  useEffect(() => { loadAuth(); loadProfile(); loadPlaces(); initLocalUser(); loadComments(); loadRoutes(); loadConditions(); loadContributor(); loadCaptainData(); loadSocial(); loadInteractions() }, [])
 
   // Sync current user's public profile to Firestore so others can view it
   useEffect(() => {
@@ -71,15 +73,20 @@ export default function RootLayout() {
             <Stack.Screen name="route-builder" />
             <Stack.Screen name="place-picker" />
             <Stack.Screen name="user-route/[id]" />
+            <Stack.Screen name="route-view/[id]" />
             <Stack.Screen name="captain-dashboard" />
             <Stack.Screen name="boat/[id]" />
             <Stack.Screen name="booking/[id]" />
             <Stack.Screen name="user/[id]" />
+            <Stack.Screen name="rewards" />
             <Stack.Screen name="follow-list" />
+            <Stack.Screen name="saved-routes" />
+            <Stack.Screen name="route-view-map/[id]" />
             <Stack.Screen name="conversations" />
             <Stack.Screen name="chat/[id]" />
+            <Stack.Screen name="saved-yachts" options={{ gestureEnabled: true }} />
           </Stack>
-          <RewardToast />
+          <AchievementModal />
         </QueryClientProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

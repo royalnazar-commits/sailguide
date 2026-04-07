@@ -452,7 +452,7 @@ const styles = StyleSheet.create({
   tagPills: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   tagPill: {
     flexDirection: 'row', alignItems: 'center', gap: 5,
-    backgroundColor: '#EFF6FF', borderRadius: 20,
+    backgroundColor: Colors.secondary + '15', borderRadius: 20,
     paddingHorizontal: 10, paddingVertical: 5,
     borderWidth: 1, borderColor: '#BFDBFE',
   },

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { UserRoute, UserRouteStop, UserRouteStatus } from '../types/userRoute'
+import { UserRoute, UserRouteDayDetail, UserRouteStop, UserRouteStatus } from '../types/userRoute'
 import { safeStorage } from '../utils/storage'
 import { useContributorStore } from './contributorStore'
 
@@ -215,10 +215,14 @@ interface RouteBuilderState {
   savedRoutes: UserRoute[]
 
   // Draft management
+  resetRouteBuilder: () => void
+  createNewRouteDraft: () => void
   startNewRoute: () => void
   discardDraft: () => void
   updateDraftTitle: (title: string) => void
   updateDraftDescription: (description: string) => void
+  updateDayDetail: (dayIndex: number, detail: Partial<UserRouteDayDetail>) => void
+  updateRouteImages: (images: string[]) => void
 
   // Stop management (getCoords injected so store stays decoupled from placesStore)
   addStop: (placeId: string, getCoords: (id: string) => PlaceCoord | null) => void
@@ -227,6 +231,7 @@ interface RouteBuilderState {
   removeStop: (stopId: string, getCoords: (id: string) => PlaceCoord | null) => void
   moveStop: (fromIndex: number, toIndex: number, getCoords: (id: string) => PlaceCoord | null) => void
   updateStopNotes: (stopId: string, notes: string) => void
+  updateStopDescription: (stopId: string, description: string) => void
   updateStopName: (stopId: string, name: string) => void
   updateStopType: (stopId: string, type: string) => void
   updateStopStayDays: (stopId: string, days: number) => void
@@ -237,6 +242,8 @@ interface RouteBuilderState {
   autoSplitDays: (nmPerDay?: number) => void
   /** Manually move a stop to a different day */
   updateStopDayIndex: (stopId: string, dayIndex: number) => void
+  /** Update lat/lng of a stop (e.g. after dragging its map marker) */
+  updateStopCoords: (stopId: string, lat: number, lng: number) => void
   /**
    * Add a waypoint with a specified dayIndex in one operation.
    * When `insertBeforeEnd` is true and the day already has ≥2 main stops,
@@ -274,6 +281,29 @@ export const useRouteBuilderStore = create<RouteBuilderState>((set, get) => ({
   draftRoute: null,
   savedRoutes: [],
 
+  resetRouteBuilder: () => {
+    set({ draftRoute: null })
+    console.log('[RouteBuilder] resetRouteBuilder — draftRoute cleared')
+  },
+
+  createNewRouteDraft: () => {
+    const now = new Date().toISOString()
+    const draft = {
+      id: `route-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      title: '',
+      description: '',
+      stops: [],
+      totalNm: 0,
+      estimatedDays: 0,
+      tags: [],
+      status: 'DRAFT' as const,
+      createdAt: now,
+      updatedAt: now,
+    }
+    set({ draftRoute: draft })
+    console.log('[RouteBuilder] createNewRouteDraft — draft created:', draft.id)
+  },
+
   startNewRoute: () => {
     const now = new Date().toISOString()
     set({
@@ -300,6 +330,24 @@ export const useRouteBuilderStore = create<RouteBuilderState>((set, get) => ({
 
   updateDraftDescription: (description) => {
     set((s) => s.draftRoute ? { draftRoute: { ...s.draftRoute, description, updatedAt: new Date().toISOString() } } : {})
+  },
+
+  updateRouteImages: (images) => {
+    set((s) => s.draftRoute ? { draftRoute: { ...s.draftRoute, images, updatedAt: new Date().toISOString() } } : {})
+  },
+
+  updateDayDetail: (dayIndex, detail) => {
+    set((s) => {
+      if (!s.draftRoute) return {}
+      const prev = s.draftRoute.dayDetails ?? {}
+      return {
+        draftRoute: {
+          ...s.draftRoute,
+          dayDetails: { ...prev, [dayIndex]: { ...prev[dayIndex], ...detail } },
+          updatedAt: new Date().toISOString(),
+        },
+      }
+    })
   },
 
   addStop: (placeId, getCoords) => {
@@ -432,6 +480,19 @@ export const useRouteBuilderStore = create<RouteBuilderState>((set, get) => ({
     })
   },
 
+  updateStopDescription: (stopId, description) => {
+    set((s) => {
+      if (!s.draftRoute) return {}
+      return {
+        draftRoute: {
+          ...s.draftRoute,
+          stops: s.draftRoute.stops.map((st) => st.id === stopId ? { ...st, description } : st),
+          updatedAt: new Date().toISOString(),
+        },
+      }
+    })
+  },
+
   updateStopStayDays: (stopId, days) => {
     set((s) => {
       if (!s.draftRoute) return {}
@@ -482,6 +543,23 @@ export const useRouteBuilderStore = create<RouteBuilderState>((set, get) => ({
         draftRoute: {
           ...s.draftRoute,
           stops: s.draftRoute.stops.map((st) => st.id === stopId ? { ...st, dayIndex } : st),
+          updatedAt: new Date().toISOString(),
+        },
+      }
+    })
+  },
+
+  updateStopCoords: (stopId, lat, lng) => {
+    set((s) => {
+      if (!s.draftRoute) return {}
+      const stops = s.draftRoute.stops.map((st) =>
+        st.id === stopId ? { ...st, lat, lng } : st
+      )
+      return {
+        draftRoute: {
+          ...s.draftRoute,
+          stops,
+          totalNm: computeTotalNm(stops, () => null),
           updatedAt: new Date().toISOString(),
         },
       }
@@ -622,23 +700,33 @@ export const useRouteBuilderStore = create<RouteBuilderState>((set, get) => ({
 
   publishRoute: (routeId, createdByName) => {
     const now = new Date().toISOString()
-    set((s) => ({
-      savedRoutes: s.savedRoutes.map((r) =>
-        r.id === routeId
-          ? { ...r, status: 'PUBLISHED', publishedAt: r.publishedAt ?? now, createdByName, updatedAt: now }
-          : r,
-      ),
-    }))
+    set((s) => {
+      const updates = { status: 'PUBLISHED' as const, createdByName, updatedAt: now }
+      return {
+        savedRoutes: s.savedRoutes.map((r) =>
+          r.id === routeId
+            ? { ...r, ...updates, publishedAt: r.publishedAt ?? now }
+            : r,
+        ),
+        // Keep draftRoute in sync so displayRoute reflects the new status immediately.
+        // Without this, saveDraft() would overwrite PUBLISHED back to DRAFT.
+        draftRoute: s.draftRoute?.id === routeId
+          ? { ...s.draftRoute, ...updates, publishedAt: s.draftRoute.publishedAt ?? now }
+          : s.draftRoute,
+      }
+    })
     get().saveRoutes()
   },
 
   unpublishRoute: (routeId) => {
     const now = new Date().toISOString()
-    set((s) => ({
-      savedRoutes: s.savedRoutes.map((r) =>
-        r.id === routeId ? { ...r, status: 'DRAFT', updatedAt: now } : r,
-      ),
-    }))
+    set((s) => {
+      const updates = { status: 'DRAFT' as const, updatedAt: now }
+      return {
+        savedRoutes: s.savedRoutes.map((r) => r.id === routeId ? { ...r, ...updates } : r),
+        draftRoute: s.draftRoute?.id === routeId ? { ...s.draftRoute, ...updates } : s.draftRoute,
+      }
+    })
     get().saveRoutes()
   },
 

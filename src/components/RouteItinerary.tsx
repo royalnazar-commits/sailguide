@@ -631,7 +631,7 @@ const styles = StyleSheet.create({
 
   weatherNote: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: '#EFF6FF', borderRadius: 10, padding: 11, marginBottom: 18,
+    backgroundColor: Colors.secondary + '12', borderRadius: 10, padding: 11, marginBottom: 18,
   },
   weatherNoteText: { flex: 1, fontSize: 13, color: Colors.secondary, lineHeight: 18 },
 

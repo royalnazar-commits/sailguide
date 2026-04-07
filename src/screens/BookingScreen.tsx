@@ -327,7 +327,7 @@ export default function BookingScreen() {
                 <Switch
                   value={draft.skipperRequired}
                   onValueChange={(v) => update('skipperRequired', v)}
-                  trackColor={{ false: Colors.border, true: Colors.primary }}
+                  trackColor={{ false: '#CBD5E1', true: Colors.secondary }}
                   thumbColor="#fff"
                 />
               </View>
@@ -360,7 +360,7 @@ export default function BookingScreen() {
               <Switch
                 value={draft.linenPackage}
                 onValueChange={(v) => update('linenPackage', v)}
-                trackColor={{ false: Colors.border, true: Colors.primary }}
+                trackColor={{ false: '#CBD5E1', true: Colors.secondary }}
                 thumbColor="#fff"
               />
             </View>
@@ -680,6 +680,7 @@ const styles = StyleSheet.create({
   priceSummaryCard: {
     backgroundColor: '#fff', borderRadius: 14, padding: 16,
     borderWidth: 1, borderColor: Colors.border, marginTop: 8,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 2,
   },
   priceSummaryTitle: { fontSize: 14, fontWeight: '800', color: Colors.text, marginBottom: 12 },
   priceDivider: { height: 1, backgroundColor: Colors.border, marginVertical: 10 },

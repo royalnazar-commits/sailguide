@@ -105,6 +105,7 @@ function PlaceCard({
     : null
 
   return (
+    <View style={styles.cardWrap}>
     <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.88}>
       {/* Left accent bar */}
       <View style={[styles.cardAccent, { backgroundColor: meta.color }]} />
@@ -185,6 +186,7 @@ function PlaceCard({
         )}
       </View>
     </TouchableOpacity>
+    </View>
   )
 }
 
@@ -238,11 +240,14 @@ const styles = StyleSheet.create({
   // List
   list: { padding: 16, gap: 12 },
 
-  // Card
-  card: {
-    backgroundColor: '#fff', borderRadius: 16, flexDirection: 'row', overflow: 'hidden',
+  // Card shadow wrapper — no overflow so iOS shadow isn't clipped
+  cardWrap: {
+    borderRadius: 16,
     shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.07, shadowRadius: 8, elevation: 3,
+  },
+  card: {
+    backgroundColor: '#fff', borderRadius: 16, flexDirection: 'row', overflow: 'hidden',
   },
   cardAccent: { width: 4 },
   cardContent: { flex: 1, padding: 14, gap: 6 },
@@ -255,7 +260,7 @@ const styles = StyleSheet.create({
   cardDesc: { fontSize: 13, color: Colors.textMuted, lineHeight: 18 },
   cardFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 },
   cardTags: { flexDirection: 'row', gap: 6, flexWrap: 'wrap', flex: 1 },
-  cardTag: { backgroundColor: '#EFF6FF', borderRadius: 20, paddingHorizontal: 8, paddingVertical: 3 },
+  cardTag: { backgroundColor: Colors.secondary + '15', borderRadius: 20, paddingHorizontal: 8, paddingVertical: 3 },
   cardTagText: { fontSize: 11, color: Colors.secondary },
   cardMeta: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   cardCommentPill: { flexDirection: 'row', alignItems: 'center', gap: 3 },

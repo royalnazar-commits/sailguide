@@ -1,20 +1,19 @@
 import React from 'react'
 import { View, Text, StyleSheet } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
-import { getLevelForPoints, LEVELS } from '../types/contributor'
+import { getLevelForCS, getLevelForPoints, SKIPPERWAY_LEVELS } from '../types/contributor'
 
 interface Props {
-  /** Pass either a level number (1–5) or the user's total points */
+  /** Pass either a direct level number (1–6) or the user's CS for approximate display */
   level?: number
   points?: number
-  /** 'xs' = inline pill in comment/card  'sm' = standalone badge  'md' = profile card */
   size?: 'xs' | 'sm' | 'md'
 }
 
 export function LevelBadge({ level, points, size = 'sm' }: Props) {
   const config = points !== undefined
     ? getLevelForPoints(points)
-    : LEVELS.find((l) => l.level === level) ?? LEVELS[0]
+    : (SKIPPERWAY_LEVELS.find((l) => l.level === level) ?? SKIPPERWAY_LEVELS[0])
 
   if (size === 'xs') {
     return (
@@ -34,7 +33,7 @@ export function LevelBadge({ level, points, size = 'sm' }: Props) {
     )
   }
 
-  // md — used in profile contributor card
+  // md — profile contributor card
   return (
     <View style={[styles.mdBadge, { backgroundColor: config.color + '12', borderColor: config.color + '35' }]}>
       <View style={[styles.mdIconCircle, { backgroundColor: config.color + '20' }]}>
@@ -43,13 +42,13 @@ export function LevelBadge({ level, points, size = 'sm' }: Props) {
       <View style={styles.mdInfo}>
         <Text style={[styles.mdLevel, { color: config.color }]}>Level {config.level}</Text>
         <Text style={[styles.mdName, { color: config.color }]}>{config.name}</Text>
+        <Text style={[styles.mdSubtitle, { color: config.color }]}>{config.subtitle}</Text>
       </View>
     </View>
   )
 }
 
 const styles = StyleSheet.create({
-  // xs — tiny pill for comment headers
   xsPill: {
     flexDirection: 'row', alignItems: 'center', gap: 3,
     borderRadius: 20, borderWidth: 1,
@@ -57,7 +56,6 @@ const styles = StyleSheet.create({
   },
   xsText: { fontSize: 10, fontWeight: '700' },
 
-  // sm — standalone badge for cards / route lists
   smPill: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
     borderRadius: 20, borderWidth: 1,
@@ -66,7 +64,6 @@ const styles = StyleSheet.create({
   },
   smText: { fontSize: 12, fontWeight: '600' },
 
-  // md — large display for profile
   mdBadge: {
     flexDirection: 'row', alignItems: 'center', gap: 14,
     borderRadius: 16, borderWidth: 1.5,
@@ -77,6 +74,7 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   mdInfo: { gap: 2 },
-  mdLevel: { fontSize: 13, fontWeight: '600', opacity: 0.8 },
-  mdName:  { fontSize: 20, fontWeight: '800' },
+  mdLevel:    { fontSize: 12, fontWeight: '600', opacity: 0.75 },
+  mdName:     { fontSize: 20, fontWeight: '800' },
+  mdSubtitle: { fontSize: 12, opacity: 0.65, marginTop: 1 },
 })

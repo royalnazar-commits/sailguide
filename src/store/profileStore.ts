@@ -45,6 +45,7 @@ interface ProfileState {
   preferences: UserPreferences
   savedRoutes: string[]
   savedPlaces: string[]
+  savedYachts: string[]
 
   // Actions
   updateStats: (stats: Partial<UserStats>) => void
@@ -56,6 +57,8 @@ interface ProfileState {
   toggleSaveRoute: (routeId: string) => void
   savePlace: (placeId: string) => void
   unsavePlace: (placeId: string) => void
+  toggleFavoriteYacht: (yachtId: string) => void
+  isFavoriteYacht: (yachtId: string) => boolean
   loadProfile: () => Promise<void>
   saveProfile: () => Promise<void>
 }
@@ -162,6 +165,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
   preferences: initialPreferences,
   savedRoutes: ['saronic-classic', 'dalmatian-explorer'],
   savedPlaces: [],
+  savedYachts: [],
 
   updateStats: (stats) => {
     set((state) => ({
@@ -261,6 +265,17 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
     get().saveProfile()
   },
 
+  toggleFavoriteYacht: (yachtId) => {
+    set((state) => ({
+      savedYachts: state.savedYachts.includes(yachtId)
+        ? state.savedYachts.filter(id => id !== yachtId)
+        : [...state.savedYachts, yachtId],
+    }))
+    get().saveProfile()
+  },
+
+  isFavoriteYacht: (yachtId) => get().savedYachts.includes(yachtId),
+
   loadProfile: async () => {
     try {
       const profileData = await safeStorage.getItem('userProfile')
@@ -273,6 +288,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
           preferences: { ...initialPreferences, ...parsed.preferences },
           savedRoutes: parsed.savedRoutes || [],
           savedPlaces: parsed.savedPlaces || [],
+          savedYachts: parsed.savedYachts || [],
         })
       }
     } catch (error) {
@@ -282,7 +298,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
 
   saveProfile: async () => {
     try {
-      const { userStats, achievements, recentActivity, preferences, savedRoutes, savedPlaces } = get()
+      const { userStats, achievements, recentActivity, preferences, savedRoutes, savedPlaces, savedYachts } = get()
       await safeStorage.setItem('userProfile', JSON.stringify({
         userStats,
         achievements,
@@ -290,6 +306,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
         preferences,
         savedRoutes,
         savedPlaces,
+        savedYachts,
       }))
     } catch (error) {
       console.error('Error saving profile:', error)

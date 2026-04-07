@@ -189,12 +189,12 @@ export default function BookingPaymentScreen() {
           postalCodeEnabled={false}
           placeholders={{ number: '4242 4242 4242 4242' }}
           cardStyle={{
-            backgroundColor: Colors.surface ?? '#1A2332',
+            backgroundColor: Colors.surface,
             textColor: Colors.text,
             borderRadius: 12,
             borderWidth: 1,
-            borderColor: Colors.border ?? '#2A3A4A',
-            placeholderColor: Colors.textMuted ?? '#6B7B8D',
+            borderColor: Colors.border,
+            placeholderColor: Colors.textMuted,
           }}
           style={styles.cardField}
           onCardChange={setCardDetails}
@@ -265,10 +265,17 @@ const styles = StyleSheet.create({
     gap: 20,
   },
   summaryCard: {
-    backgroundColor: Colors.surface ?? '#1A2332',
-    borderRadius: 14,
+    backgroundColor: Colors.surface,
+    borderRadius: 16,
     padding: 18,
     gap: 6,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.07,
+    shadowRadius: 8,
+    elevation: 3,
   },
   yachtName: {
     fontSize: 17,
@@ -298,7 +305,7 @@ const styles = StyleSheet.create({
   totalAmount: {
     fontSize: 22,
     fontWeight: '800',
-    color: Colors.accent ?? '#00B4D8',
+    color: Colors.primary,
   },
   refNote: {
     fontSize: 12,
@@ -350,7 +357,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.background,
   },
   payButton: {
-    backgroundColor: Colors.accent ?? '#00B4D8',
+    backgroundColor: Colors.primary,
     borderRadius: 14,
     paddingVertical: 16,
     alignItems: 'center',

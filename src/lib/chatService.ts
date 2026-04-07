@@ -15,10 +15,26 @@ export interface Conversation {
   updatedAt: Timestamp | null
 }
 
+export interface RouteMessageStats {
+  days?: number
+  nm?: number
+  stops?: number
+}
+
 export interface Message {
   id: string
   senderId: string
+  /** undefined / missing = plain text (legacy). 'route' = shared route card. */
+  type?: 'text' | 'route'
   text: string
+  // Route message fields — only present when type === 'route'
+  routeId?: string
+  routeTitle?: string
+  routeAuthorName?: string
+  routeAuthorId?: string
+  routeCoverImage?: string
+  routeAvgRating?: number
+  routeStats?: RouteMessageStats
   createdAt: Timestamp | null
 }
 
@@ -60,7 +76,15 @@ export async function getOrCreateConversation(
   return id
 }
 
-/** Realtime subscription to all conversations the current user is in */
+/**
+ * Realtime subscription to all conversations the current user is in.
+ *
+ * ⚠️  COMPOSITE INDEX REQUIRED
+ * Collection : conversations
+ * Fields     : participants (Arrays) · updatedAt (Descending)
+ * Create via : Firebase Console → Firestore → Indexes → Composite → Add index
+ * Or deploy  : firestore.indexes.json (see project root)
+ */
 export function subscribeToConversations(
   userId: string,
   onData: (convos: Conversation[]) => void,
@@ -89,6 +113,37 @@ export function subscribeToMessages(
     const messages = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Message))
     onData(messages)
   })
+}
+
+/** Send a route card message */
+export async function sendRouteMessage(
+  convId: string,
+  senderId: string,
+  route: { id: string; title: string; authorName?: string; authorId?: string; coverImage?: string; avgRating?: number; stats?: RouteMessageStats },
+): Promise<void> {
+  const preview = `📍 Shared a route: ${route.title}`
+  try {
+    await addDoc(collection(db, 'conversations', convId, 'messages'), {
+      senderId,
+      type: 'route',
+      text: preview,
+      routeId: route.id,
+      routeTitle: route.title,
+      ...(route.authorName  ? { routeAuthorName:  route.authorName }  : {}),
+      ...(route.authorId    ? { routeAuthorId:    route.authorId }    : {}),
+      ...(route.coverImage  ? { routeCoverImage:  route.coverImage }  : {}),
+      ...(route.avgRating != null ? { routeAvgRating: route.avgRating } : {}),
+      ...(route.stats       ? { routeStats:       route.stats }       : {}),
+      createdAt: serverTimestamp(),
+    })
+    await updateDoc(doc(db, 'conversations', convId), {
+      lastMessage: preview,
+      updatedAt: serverTimestamp(),
+    })
+  } catch (err) {
+    console.error('[chatService] sendRouteMessage failed:', err)
+    throw err
+  }
 }
 
 /** Send a message and update the conversation's lastMessage */

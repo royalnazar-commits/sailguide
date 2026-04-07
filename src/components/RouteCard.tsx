@@ -39,8 +39,10 @@ export function RouteCard({ route, onPress, showSaveIndicator = false }: Props) 
   const heroUri = imgErr ? ROUTE_FALLBACK : (route.previewPhotos[0] || ROUTE_FALLBACK)
 
   return (
-    // Plain View — no gesture handler here so the inner ScrollView can swipe freely
+    // Outer View carries shadow; inner cardInner provides overflow:hidden so
+    // the image is clipped to border radius without killing the shadow on iOS.
     <View style={styles.card}>
+      <View style={styles.cardInner}>
 
       {/* ── Swipeable media block ─────────────────────────────────────────── */}
       <View
@@ -166,6 +168,8 @@ export function RouteCard({ route, onPress, showSaveIndicator = false }: Props) 
           </View>
         </View>
       </TouchableOpacity>
+
+      </View>{/* cardInner */}
     </View>
   )
 }
@@ -173,23 +177,28 @@ export function RouteCard({ route, onPress, showSaveIndicator = false }: Props) 
 function StatItem({ icon, value, iconColor }: { icon: any; value: string; iconColor?: string }) {
   return (
     <View style={styles.statItem}>
-      <Ionicons name={icon} size={13} color={iconColor || Colors.textSecondary} />
+      <Ionicons name={icon} size={13} color={iconColor || Colors.secondary} />
       <Text style={styles.statText}>{value}</Text>
     </View>
   )
 }
 
 const styles = StyleSheet.create({
+  // Outer shell carries the shadow — no overflow:hidden so shadow isn't clipped on iOS.
   card: {
     backgroundColor: Colors.card,
     borderRadius: 16,
-    overflow: 'hidden',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.10,
     shadowRadius: 10,
     elevation: 4,
     marginBottom: 16,
+  },
+  // Inner shell clips image + content to border radius without clipping the shadow.
+  cardInner: {
+    borderRadius: 16,
+    overflow: 'hidden',
   },
 
   // ── Media block ──────────────────────────────────────────────────────────
@@ -251,7 +260,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8, paddingHorizontal: 4, marginBottom: 12,
   },
   statItem: { flexDirection: 'row', alignItems: 'center', gap: 4, flex: 1, justifyContent: 'center' },
-  statText: { fontSize: 13, color: Colors.textSecondary, fontWeight: '500' },
+  statText: { fontSize: 13, color: Colors.secondary, fontWeight: '600' },
   statDivider: { width: 1, height: 14, backgroundColor: Colors.border },
   footer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   captainRow: { flexDirection: 'row', alignItems: 'center', gap: 4, flex: 1, marginRight: 8 },

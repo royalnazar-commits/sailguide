@@ -12,7 +12,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useAuthStore } from '../store/authStore'
 import { useProfileStore } from '../store/profileStore'
 import { useContributorStore } from '../store/contributorStore'
-import { BADGE_CONFIGS, BADGE_CATEGORY_ORDER, LEVELS, BadgeId, BadgeCategory, getLevelForPoints } from '../types/contributor'
+import { BADGE_CONFIGS, LEVELS, BadgeId, getLevelForPoints } from '../types/contributor'
 import { LevelBadge } from '../components/LevelBadge'
 import { Colors } from '../constants/colors'
 import { usePlacesStore } from '../store/placesStore'
@@ -22,17 +22,9 @@ import { saveUserProfile, fetchUserProfile, FirestoreUserProfile } from '../lib/
 import { getOrCreateConversation } from '../lib/chatService'
 import { UserRoute } from '../types/userRoute'
 import { Signal, getCategoryMeta, deleteSignal, subscribeToActiveSignals } from '../lib/signalService'
-
-// ── Category labels ───────────────────────────────────────────────────────────
-
-const CATEGORY_LABELS: Record<BadgeCategory, string> = {
-  CARTOGRAPHY:  'Cartography',
-  PHOTOGRAPHY:  'Photography',
-  COMMUNITY:    'Community',
-  NAVIGATION:   'Navigation',
-  REPUTATION:   'Reputation',
-  MILESTONES:   'Milestones',
-}
+import { Place } from '../types/place'
+import { useCaptainStore } from '../store/captainStore'
+import { PurchaseModal } from '../components/PurchaseModal'
 
 type Tab = 'routes' | 'places' | 'signals' | 'activity' | 'achievements'
 
@@ -52,10 +44,13 @@ export default function ProfileScreen() {
 
   // Own-profile data
   const { user, clearAuth, updateUser } = useAuthStore()
-  const { userStats, recentActivity } = useProfileStore()
+  const { userStats, recentActivity, savedRoutes: bookmarkedRouteIds, toggleSaveRoute } = useProfileStore()
   const { userPlaces } = usePlacesStore()
   const { savedRoutes, getAllPublishedRoutes } = useRouteBuilderStore()
-  const { totalPoints, currentLevel, progressToNextLevel, pointsToNextLevel, earnedBadges } = useContributorStore()
+  const {
+    contributionScore, reputationScore, currentLevel,
+    progressToNextLevel, rsToNextLevel, conditionsForLevel, earnedBadges,
+  } = useContributorStore()
   const {
     following: followingList,
     isFollowing,
@@ -65,6 +60,7 @@ export default function ProfileScreen() {
     getFollowingProfiles,
     getProfile,
   } = useSocialStore()
+  const { captainSettings, purchaseItem, isSubscribedTo, hasAccessToRoute, hasAccessToPlace } = useCaptainStore()
 
   const insets = useSafeAreaInsets()
 
@@ -136,7 +132,7 @@ export default function ProfileScreen() {
   })()
 
   const contributorPoints: number = (() => {
-    if (isOwnProfile) return totalPoints
+    if (isOwnProfile) return contributionScore
     if (demoProfile) return demoProfile.contributorPoints
     return firestoreProfile?.contributorPoints ?? 0
   })()
@@ -182,6 +178,12 @@ export default function ProfileScreen() {
   )
 
   const amFollowing = isFollowing(targetUserId)
+  const isCaptainUser = !isOwnProfile && isVerified
+  const isSubscribed = isSubscribedTo(targetUserId)
+  const captainPlaces = useMemo(
+    () => isCaptainUser ? userPlaces.filter((p) => p.createdBy === targetUserId) : [],
+    [userPlaces, targetUserId, isCaptainUser],
+  )
 
   // ── Own-profile UI state ────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<Tab>('routes')
@@ -199,6 +201,13 @@ export default function ProfileScreen() {
 
   // Other-user messaging state
   const [messaging, setMessaging] = useState(false)
+  const [purchaseTarget, setPurchaseTarget] = useState<{
+    type: 'ROUTE' | 'PLACE' | 'SUBSCRIPTION'
+    itemId: string
+    title: string
+    subtitle: string
+    price: number
+  } | null>(null)
 
   // ── Handlers ────────────────────────────────────────────────────────────────
   const handleLogout = () => {
@@ -261,7 +270,7 @@ export default function ProfileScreen() {
     setEditVisible(false)
     if (user) {
       const updatedUser = { ...user, ...updates }
-      saveUserProfile(updatedUser, totalPoints, savedRoutes.length)
+      saveUserProfile(updatedUser, contributionScore, savedRoutes.length)
     }
   }
 
@@ -292,6 +301,68 @@ export default function ProfileScreen() {
     } else {
       followUser(targetUserId)
     }
+  }
+
+  const handleSubscribe = () => {
+    if (!captainSettings.subscriptionEnabled) return
+    if (isSubscribed) {
+      Alert.alert('Already subscribed', `You already have access to all of ${displayName}'s premium content.`)
+      return
+    }
+    setPurchaseTarget({
+      type: 'SUBSCRIPTION',
+      itemId: targetUserId,
+      title: `Subscribe to ${displayName}`,
+      subtitle: `Get unlimited access to all of ${displayName}'s premium routes and places.`,
+      price: captainSettings.subscriptionPriceUsd,
+    })
+  }
+
+  const handleBuyRoute = (route: UserRoute) => {
+    const hasAccess = hasAccessToRoute(route.id, targetUserId, user?.id)
+    if (hasAccess) {
+      router.push(`/user-route/${route.id}`)
+      return
+    }
+    setPurchaseTarget({
+      type: 'ROUTE',
+      itemId: route.id,
+      title: route.title,
+      subtitle: route.description ?? `Premium route by ${displayName}`,
+      price: route.priceUsd ?? 0,
+    })
+  }
+
+  const handleBuyPlace = (place: Place) => {
+    const hasAccess = hasAccessToPlace(place.id, targetUserId, user?.id)
+    if (hasAccess) {
+      router.push(`/place/${place.id}`)
+      return
+    }
+    setPurchaseTarget({
+      type: 'PLACE',
+      itemId: place.id,
+      title: place.name,
+      subtitle: place.description,
+      price: place.priceUsd ?? 0,
+    })
+  }
+
+  const handleConfirmPurchase = () => {
+    if (!purchaseTarget) return
+    purchaseItem({
+      type: purchaseTarget.type,
+      itemId: purchaseTarget.itemId,
+      captainId: targetUserId,
+      priceUsd: purchaseTarget.price,
+    })
+    Alert.alert(
+      purchaseTarget.type === 'SUBSCRIPTION' ? 'Subscribed!' : 'Unlocked!',
+      purchaseTarget.type === 'SUBSCRIPTION'
+        ? `You now have access to all of ${displayName}'s premium content.`
+        : `"${purchaseTarget.title}" is now unlocked.`,
+    )
+    setPurchaseTarget(null)
   }
 
   // Detect messenger type and return icon/color/url metadata
@@ -330,7 +401,7 @@ export default function ProfileScreen() {
       >
         <Ionicons name="arrow-back" size={22} color={Colors.text} />
       </TouchableOpacity>
-      <Text style={styles.topBarTitle}>Sailor Profile</Text>
+      <Text style={styles.topBarTitle}>{isCaptainUser ? 'Captain Profile' : 'Sailor Profile'}</Text>
       <View style={styles.headerActions}>
         <TouchableOpacity
           style={styles.messageBtn}
@@ -455,6 +526,43 @@ export default function ProfileScreen() {
     </>
   )
 
+  // ── Subscribe banner (captain profiles) ────────────────────────────────────
+  const renderSubscribeBanner = () => {
+    if (isOwnProfile || !isCaptainUser || !captainSettings.subscriptionEnabled) return null
+    return (
+      <TouchableOpacity
+        style={[styles.subscribeCard, isSubscribed && styles.subscribedCard]}
+        onPress={handleSubscribe}
+        activeOpacity={0.85}
+      >
+        <View style={styles.subscribeLeft}>
+          <Ionicons
+            name={isSubscribed ? 'checkmark-circle' : 'star'}
+            size={22}
+            color={isSubscribed ? Colors.success : '#fff'}
+          />
+          <View>
+            <Text style={[styles.subscribeTitle, isSubscribed && styles.subscribedTitle]}>
+              {isSubscribed ? 'Subscribed' : `Subscribe to ${displayName}`}
+            </Text>
+            <Text style={[styles.subscribeSub, isSubscribed && styles.subscribedSub]}>
+              {isSubscribed
+                ? 'You have access to all premium content'
+                : `$${captainSettings.subscriptionPriceUsd.toFixed(2)}/month · Unlock all premium content`}
+            </Text>
+          </View>
+        </View>
+        {!isSubscribed && (
+          <View style={styles.subscribePricePill}>
+            <Text style={styles.subscribePriceText}>
+              ${captainSettings.subscriptionPriceUsd.toFixed(2)}
+            </Text>
+          </View>
+        )}
+      </TouchableOpacity>
+    )
+  }
+
   // ── Shared stats rows ───────────────────────────────────────────────────────
   const renderStatsRows = () => (
     <>
@@ -470,7 +578,7 @@ export default function ProfileScreen() {
           icon="location-outline"
           value={placesCount}
           label="Places"
-          color="#00B4D8"
+          color={Colors.accent}
           onPress={isOwnProfile ? () => router.push('/my-places') : undefined}
         />
         <StatCard
@@ -478,11 +586,12 @@ export default function ProfileScreen() {
           value={contributorPoints}
           label="Points"
           color="#F59E0B"
+          onPress={isOwnProfile ? () => router.push('/rewards') : undefined}
         />
       </View>
 
       {/* Social stats */}
-      <View style={[styles.statsRow, { marginTop: isOwnProfile ? 10 : 0 }]}>
+      <View style={styles.statsRow}>
         <StatCard
           icon="person-add-outline"
           value={followersCount}
@@ -507,57 +616,110 @@ export default function ProfileScreen() {
     </>
   )
 
-  // ── Shared contributor level section ────────────────────────────────────────
+  // ── Skipperway contributor level section ─────────────────────────────────────
   const renderContributorLevel = () => {
-    const pts = contributorPoints
     const lvl = displayLevel
-    const isMaxLevel = lvl.level === 5
+    const isMaxLevel = lvl.level === LEVELS.length
+    const isOwn = isOwnProfile
 
-    let progressValue = 0
-    let ptsToNext = 0
-    if (isOwnProfile) {
-      progressValue = progressToNextLevel()
-      ptsToNext = pointsToNextLevel()
-    } else {
-      if (!isMaxLevel) {
-        const nextLevel = LEVELS[lvl.level] // index = level (0-based off by one, so lvl.level gives next)
-        const range = nextLevel.minPoints - lvl.minPoints
-        progressValue = range > 0 ? (pts - lvl.minPoints) / range : 0
-        ptsToNext = nextLevel.minPoints - pts
-      }
-    }
+    // Progress / next level
+    const progressValue = isOwn ? progressToNextLevel() : 0
+    const rsNext = isOwn ? rsToNextLevel() : 0
+    const nextLevel = LEVELS[lvl.level] // array index = lvl.level since 0-based
+
+    // Conditions for next level (own profile only)
+    const conditions = (isOwn && nextLevel) ? conditionsForLevel(nextLevel) : []
 
     return (
-      <View style={isOwnProfile ? styles.section : styles.publicSection}>
-        <Text style={styles.sectionTitle}>Contributor Level</Text>
-        <View style={styles.contributorCard}>
-          <LevelBadge points={pts} size="md" />
-          <View style={styles.contributorMeta}>
-            <View style={styles.contributorPointsRow}>
-              <Text style={styles.contributorPoints}>{pts} pts</Text>
-              {!isMaxLevel && (
-                <Text style={styles.contributorNextLevel}>
-                  {ptsToNext} to {LEVELS[lvl.level].name}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Skipperway Level</Text>
+
+        {/* Level badge */}
+        <LevelBadge points={isOwn ? contributionScore : contributorPoints} size="md" />
+
+        {/* Own-profile detail */}
+        {isOwn && (
+          <View style={styles.repCard}>
+
+            {/* Reputation Score (primary — drives levels) */}
+            <View style={styles.repRow}>
+              <View style={styles.repLabelRow}>
+                <Ionicons name="shield-outline" size={14} color={Colors.primary} />
+                <Text style={styles.repLabel}>Reputation Score</Text>
+                <Text style={styles.repHint}>drives level progression</Text>
+              </View>
+              <Text style={styles.repValue}>{reputationScore.toFixed(1)} RS</Text>
+            </View>
+
+            {/* RS progress bar */}
+            {!isMaxLevel && nextLevel && (
+              <View style={styles.progressSection}>
+                <View style={styles.progressBar}>
+                  <View
+                    style={[
+                      styles.progressFill,
+                      { width: `${Math.round(progressValue * 100)}%` as any, backgroundColor: lvl.color },
+                    ]}
+                  />
+                </View>
+                <Text style={styles.progressLabel}>
+                  {Math.round(progressValue * 100)}% · {rsNext.toFixed(0)} RS to {nextLevel.name}
                 </Text>
-              )}
+              </View>
+            )}
+            {isMaxLevel && <Text style={styles.contributorMaxed}>Legend status achieved</Text>}
+
+            {/* Divider */}
+            <View style={styles.repDivider} />
+
+            {/* Contribution Score (secondary — activity tracking) */}
+            <View style={styles.repRow}>
+              <View style={styles.repLabelRow}>
+                <Ionicons name="create-outline" size={14} color={Colors.textSecondary} />
+                <Text style={styles.repLabel}>Contribution Score</Text>
+                <Text style={styles.repHint}>your activity</Text>
+              </View>
+              <Text style={[styles.repValue, { color: Colors.textSecondary }]}>{contributionScore} CS</Text>
             </View>
-            <View style={styles.progressBar}>
-              <View
-                style={[
-                  styles.progressFill,
-                  { width: `${Math.round(progressValue * 100)}%` as any, backgroundColor: lvl.color },
-                ]}
-              />
-            </View>
-            {isMaxLevel ? (
-              <Text style={styles.contributorMaxed}>Maximum level reached</Text>
-            ) : (
-              <Text style={styles.contributorHint}>
-                {Math.round(progressValue * 100)}% to Level {lvl.level + 1}
+
+            {/* Reputation info callout */}
+            <View style={styles.repInfoBox}>
+              <Ionicons name="information-circle-outline" size={14} color={Colors.textMuted} />
+              <Text style={styles.repInfoText}>
+                Reputation is earned when other sailors engage with your content — likes, saves, and route adoption.
               </Text>
+            </View>
+
+            {/* Next-level conditions */}
+            {!isMaxLevel && conditions.length > 0 && (
+              <View style={styles.conditionsBlock}>
+                <Text style={styles.conditionsTitle}>To reach {nextLevel?.name}:</Text>
+                {conditions.map((row) => (
+                  <View key={row.label} style={styles.conditionRow}>
+                    <Ionicons
+                      name={row.met ? 'checkmark-circle' : 'ellipse-outline'}
+                      size={15}
+                      color={row.met ? Colors.success : Colors.textMuted}
+                    />
+                    <Text style={[styles.conditionText, row.met && styles.conditionTextMet]}>
+                      {row.label}
+                    </Text>
+                    <Text style={[styles.conditionCount, row.met && styles.conditionCountMet]}>
+                      {row.current}/{row.required}
+                    </Text>
+                  </View>
+                ))}
+              </View>
             )}
           </View>
-        </View>
+        )}
+
+        {/* Other-profile: simple points line */}
+        {!isOwn && (
+          <View style={styles.contributorMeta}>
+            <Text style={styles.contributorPoints}>{contributorPoints} contribution points</Text>
+          </View>
+        )}
       </View>
     )
   }
@@ -584,10 +746,10 @@ export default function ProfileScreen() {
                   <Ionicons
                     name={icon as any}
                     size={16}
-                    color={active ? Colors.primary : Colors.textMuted}
+                    color={active ? Colors.secondary : Colors.textMuted}
                   />
                   {showBadge && (
-                    <View style={[styles.tabBadge, { backgroundColor: active ? Colors.primary : '#22C55E' }]} />
+                    <View style={[styles.tabBadge, { backgroundColor: active ? Colors.secondary : '#22C55E' }]} />
                   )}
                 </View>
                 <Text style={[styles.tabText, active && styles.activeTabText]}>{label}</Text>
@@ -608,33 +770,44 @@ export default function ProfileScreen() {
               />
             ) : (
               <View style={styles.card}>
-                {routesList.map((route, i) => (
-                  <View key={route.id}>
-                    <TouchableOpacity
-                      style={styles.listItem}
-                      onPress={() => isOwnProfile
-                        ? router.push('/my-routes')
-                        : router.push(`/user-route/${route.id}`)
-                      }
-                      activeOpacity={0.7}
-                    >
-                      <View style={[styles.listItemIcon, { backgroundColor: Colors.primary + '15' }]}>
-                        <Ionicons name="map-outline" size={18} color={Colors.primary} />
-                      </View>
-                      <View style={styles.listItemContent}>
-                        <Text style={styles.listItemTitle} numberOfLines={1}>
-                          {route.title || 'Untitled Route'}
-                        </Text>
-                        <Text style={styles.listItemSub}>
-                          {route.stops.length} stops · {route.totalNm} nm
-                          {route.status === 'PUBLISHED' ? ' · Published' : ''}
-                        </Text>
-                      </View>
-                      <Ionicons name="chevron-forward" size={16} color={Colors.textMuted} />
-                    </TouchableOpacity>
-                    {i < routesList.length - 1 && <View style={styles.divider} />}
-                  </View>
-                ))}
+                {routesList.map((route, i) => {
+                  const onRoutePress = () => isCaptainUser
+                    ? handleBuyRoute(route)
+                    : router.push(`/user-route/${route.id}`)
+                  return (
+                    <View key={route.id}>
+                      <TouchableOpacity style={styles.listItem} onPress={onRoutePress} activeOpacity={0.7}>
+                        <View style={[styles.listItemIcon, { backgroundColor: Colors.primary + '15' }]}>
+                          <Ionicons name="map-outline" size={18} color={Colors.primary} />
+                        </View>
+                        <View style={styles.listItemContent}>
+                          <Text style={styles.listItemTitle} numberOfLines={1}>
+                            {route.title || 'Untitled Route'}
+                          </Text>
+                          <Text style={styles.listItemSub}>
+                            {route.status === 'PUBLISHED' ? 'Published' : 'Draft'} · {route.stops.length} stops · {route.totalNm} nm
+                          </Text>
+                        </View>
+                        {isCaptainUser ? (
+                          route.isPremium && !hasAccessToRoute(route.id, targetUserId, user?.id) ? (
+                            <View style={styles.lockPill}>
+                              <Ionicons name="lock-closed" size={11} color={Colors.warning} />
+                              <Text style={styles.lockPillText}>${route.priceUsd?.toFixed(2)}</Text>
+                            </View>
+                          ) : (
+                            <View style={styles.freePill}>
+                              <Ionicons name="checkmark-circle" size={11} color={Colors.success} />
+                              <Text style={styles.freePillText}>{route.priceUsd ? 'Owned' : 'Free'}</Text>
+                            </View>
+                          )
+                        ) : (
+                          <Ionicons name="chevron-forward" size={15} color={Colors.textMuted} />
+                        )}
+                      </TouchableOpacity>
+                      {i < routesList.length - 1 && <View style={styles.divider} />}
+                    </View>
+                  )
+                })}
               </View>
             )}
           </View>
@@ -644,12 +817,46 @@ export default function ProfileScreen() {
         {activeTab === 'places' && (
           <View style={styles.section}>
             {!isOwnProfile ? (
-              <EmptyState
-                icon="location-outline"
-                message="Places are private"
-                action="Explore Map"
-                onAction={() => router.push('/(tabs)/explore')}
-              />
+              isCaptainUser && captainPlaces.length > 0 ? (
+                <View style={styles.card}>
+                  {captainPlaces.map((place, i) => (
+                    <View key={place.id}>
+                      <TouchableOpacity
+                        style={styles.listItem}
+                        onPress={() => handleBuyPlace(place)}
+                        activeOpacity={0.7}
+                      >
+                        <View style={[styles.listItemIcon, { backgroundColor: Colors.accent + '15' }]}>
+                          <Ionicons name="location-outline" size={18} color={Colors.accent} />
+                        </View>
+                        <View style={styles.listItemContent}>
+                          <Text style={styles.listItemTitle} numberOfLines={1}>{place.name}</Text>
+                          <Text style={styles.listItemSub}>{place.type} · {place.region}</Text>
+                        </View>
+                        {place.isPremium && !hasAccessToPlace(place.id, targetUserId, user?.id) ? (
+                          <View style={styles.lockPill}>
+                            <Ionicons name="lock-closed" size={11} color={Colors.warning} />
+                            <Text style={styles.lockPillText}>${place.priceUsd?.toFixed(2)}</Text>
+                          </View>
+                        ) : (
+                          <View style={styles.freePill}>
+                            <Ionicons name="checkmark-circle" size={11} color={Colors.success} />
+                            <Text style={styles.freePillText}>{place.priceUsd ? 'Owned' : 'Free'}</Text>
+                          </View>
+                        )}
+                      </TouchableOpacity>
+                      {i < captainPlaces.length - 1 && <View style={styles.divider} />}
+                    </View>
+                  ))}
+                </View>
+              ) : (
+                <EmptyState
+                  icon="location-outline"
+                  message={isCaptainUser ? 'No places shared yet' : 'Places are private'}
+                  action="Explore Map"
+                  onAction={() => router.push('/(tabs)/explore')}
+                />
+              )
             ) : userPlaces.length === 0 ? (
               <EmptyState
                 icon="location-outline"
@@ -666,8 +873,8 @@ export default function ProfileScreen() {
                       onPress={() => router.push('/my-places')}
                       activeOpacity={0.7}
                     >
-                      <View style={[styles.listItemIcon, { backgroundColor: '#00B4D8' + '15' }]}>
-                        <Ionicons name="location-outline" size={18} color="#00B4D8" />
+                      <View style={[styles.listItemIcon, { backgroundColor: Colors.accent + '15' }]}>
+                        <Ionicons name="location-outline" size={18} color={Colors.accent} />
                       </View>
                       <View style={styles.listItemContent}>
                         <Text style={styles.listItemTitle} numberOfLines={1}>{place.name}</Text>
@@ -793,35 +1000,28 @@ export default function ProfileScreen() {
                   onAction={() => router.push('/(tabs)/explore')}
                 />
               </View>
-            ) : (
-              BADGE_CATEGORY_ORDER.map((category) => {
-                const badgesInCategory = (Object.keys(BADGE_CONFIGS) as BadgeId[]).filter(
-                  (id) => BADGE_CONFIGS[id].category === category,
-                )
-                return (
-                  <View key={category} style={styles.section}>
-                    <Text style={styles.sectionTitle}>{CATEGORY_LABELS[category]}</Text>
-                    <View style={styles.achievementsGrid}>
-                      {badgesInCategory.map((badgeId) => {
-                        const config = BADGE_CONFIGS[badgeId]
-                        const earned = earnedBadges.find((b) => b.badgeId === badgeId)
-                        return (
-                          <ContributorBadge
-                            key={badgeId}
-                            title={config.title}
-                            description={config.description}
-                            icon={config.icon}
-                            color={config.color}
-                            earned={!!earned}
-                            earnedAt={earned?.earnedAt}
-                          />
-                        )
-                      })}
-                    </View>
+            ) : (() => {
+              const allBadges = (Object.keys(BADGE_CONFIGS) as BadgeId[])
+                .map((id) => ({ config: BADGE_CONFIGS[id], record: earnedBadges.find((b) => b.badgeId === id) }))
+                .sort((a, b) => (b.record ? 1 : 0) - (a.record ? 1 : 0))
+              return (
+                <View style={styles.section}>
+                  <View style={styles.achievementsGrid}>
+                    {allBadges.map(({ config, record }) => (
+                      <ContributorBadge
+                        key={config.id}
+                        title={config.title}
+                        description={config.description}
+                        icon={config.icon}
+                        color={config.color}
+                        earned={!!record}
+                        earnedAt={record?.earnedAt}
+                      />
+                    ))}
                   </View>
-                )
-              })
-            )}
+                </View>
+              )
+            })()}
           </View>
         )}
       </>
@@ -989,6 +1189,8 @@ export default function ProfileScreen() {
         >
           {renderProfileCard()}
 
+          {renderSubscribeBanner()}
+
           {renderStatsRows()}
 
           {/* Captain Dashboard — own profile only */}
@@ -1035,6 +1237,28 @@ export default function ProfileScreen() {
 
           {isOwnProfile && renderEditModal()}
         </ScrollView>
+      )}
+
+      {purchaseTarget && (
+        <PurchaseModal
+          visible
+          onClose={() => setPurchaseTarget(null)}
+          title={
+            purchaseTarget.type === 'SUBSCRIPTION'
+              ? `Subscribe to ${displayName}`
+              : `Unlock "${purchaseTarget.title}"`
+          }
+          subtitle={purchaseTarget.subtitle}
+          priceUsd={purchaseTarget.price}
+          confirmLabel={
+            purchaseTarget.type === 'SUBSCRIPTION'
+              ? `Subscribe · $${purchaseTarget.price.toFixed(2)}/month`
+              : purchaseTarget.price === 0
+              ? 'Get Free Access'
+              : `Buy for $${purchaseTarget.price.toFixed(2)}`
+          }
+          onConfirm={handleConfirmPurchase}
+        />
       )}
     </View>
   )
@@ -1188,7 +1412,7 @@ const styles = StyleSheet.create({
     borderRadius: 20, paddingHorizontal: 14, paddingVertical: 7,
   },
   followingBtn: {
-    backgroundColor: '#EFF6FF',
+    backgroundColor: Colors.secondary + '12',
     borderWidth: 1.5, borderColor: Colors.secondary,
   },
   followBtnText: { fontSize: 13, fontWeight: '700', color: '#fff' },
@@ -1204,24 +1428,25 @@ const styles = StyleSheet.create({
   ownAvatar: { width: 72, height: 72, borderRadius: 36 },
   ownAvatarPlaceholder: {
     width: 72, height: 72, borderRadius: 36,
-    backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center',
+    backgroundColor: Colors.secondary + '15', alignItems: 'center', justifyContent: 'center',
   },
   ownUserInfo: { flex: 1 },
   editBtn: {
     width: 36, height: 36, borderRadius: 18,
-    backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center',
+    backgroundColor: Colors.secondary + '15', alignItems: 'center', justifyContent: 'center',
   },
 
   // ── Other user centered profile card ─────────────────────────────────────
   publicProfileCard: {
     backgroundColor: '#fff', borderRadius: 16, padding: 20,
+    marginHorizontal: 20, marginTop: 16,
     alignItems: 'center',
     borderWidth: 1, borderColor: Colors.border,
   },
   publicAvatar: { width: 80, height: 80, borderRadius: 40, marginBottom: 14 },
   publicAvatarPlaceholder: {
     width: 80, height: 80, borderRadius: 40,
-    backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center',
+    backgroundColor: Colors.secondary + '15', alignItems: 'center', justifyContent: 'center',
     marginBottom: 14,
   },
   publicNameRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
@@ -1261,6 +1486,7 @@ const styles = StyleSheet.create({
   statCard: {
     flex: 1, backgroundColor: '#fff', borderRadius: 16, padding: 16,
     alignItems: 'center', gap: 8,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 6, elevation: 2,
   },
   statTapDot: { width: 16, height: 2, borderRadius: 1 },
   statIcon: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
@@ -1324,19 +1550,40 @@ const styles = StyleSheet.create({
 
   // ── Contributor card ──────────────────────────────────────────────────────
   section: { marginTop: 20, paddingHorizontal: 20 },
-  publicSection: { marginTop: 16, paddingHorizontal: 16 },
   sectionTitle: { fontSize: 18, fontWeight: '700', color: Colors.text, marginBottom: 10 },
-  contributorCard: {
-    backgroundColor: '#fff', borderRadius: 16, padding: 16, gap: 14,
+
+  // reputation card
+  repCard: {
+    marginTop: 12,
+    backgroundColor: '#fff', borderRadius: 16, padding: 16, gap: 10,
     shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 6, elevation: 2,
   },
-  contributorMeta: { gap: 6 },
-  contributorPointsRow: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
-  contributorPoints: { fontSize: 22, fontWeight: '800', color: Colors.text },
-  contributorNextLevel: { fontSize: 13, color: Colors.textMuted },
-  progressBar: { height: 8, backgroundColor: Colors.border, borderRadius: 4, overflow: 'hidden' },
+  repRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  repLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 5, flex: 1 },
+  repLabel: { fontSize: 13, fontWeight: '700', color: Colors.text },
+  repHint: { fontSize: 11, color: Colors.textMuted, fontStyle: 'italic' },
+  repValue: { fontSize: 16, fontWeight: '800', color: Colors.primary },
+  repDivider: { height: StyleSheet.hairlineWidth, backgroundColor: Colors.border, marginVertical: 2 },
+  progressSection: { gap: 4 },
+  progressBar: { height: 7, backgroundColor: Colors.border, borderRadius: 4, overflow: 'hidden' },
   progressFill: { height: '100%', borderRadius: 4 },
-  contributorHint: { fontSize: 12, color: Colors.textMuted },
+  progressLabel: { fontSize: 11, color: Colors.textMuted },
+  repInfoBox: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 6,
+    backgroundColor: Colors.background, borderRadius: 8, padding: 10,
+  },
+  repInfoText: { flex: 1, fontSize: 12, color: Colors.textMuted, lineHeight: 16 },
+  conditionsBlock: { gap: 6 },
+  conditionsTitle: { fontSize: 12, fontWeight: '700', color: Colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5 },
+  conditionRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  conditionText: { flex: 1, fontSize: 13, color: Colors.textSecondary },
+  conditionTextMet: { color: Colors.success },
+  conditionCount: { fontSize: 12, fontWeight: '700', color: Colors.textMuted },
+  conditionCountMet: { color: Colors.success },
+
+  // fallback (other profiles)
+  contributorMeta: { gap: 6, marginTop: 8 },
+  contributorPoints: { fontSize: 14, color: Colors.textSecondary },
   contributorMaxed: { fontSize: 12, color: Colors.success, fontWeight: '600' },
 
   // ── Tabs ─────────────────────────────────────────────────────────────────
@@ -1358,9 +1605,9 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
     borderRadius: 10,
   },
-  activeTab: { backgroundColor: Colors.primary + '12' },
+  activeTab: { backgroundColor: Colors.secondary + '18' },
   tabText: { fontSize: 10, fontWeight: '600', color: Colors.textMuted, letterSpacing: 0.2 },
-  activeTabText: { color: Colors.primary },
+  activeTabText: { color: Colors.secondary },
   tabIconWrap: { position: 'relative', alignItems: 'center', justifyContent: 'center' },
   tabBadge: {
     position: 'absolute', top: -2, right: -4,
@@ -1369,8 +1616,14 @@ const styles = StyleSheet.create({
   },
 
   // ── Shared card / list ────────────────────────────────────────────────────
-  card: { backgroundColor: '#fff', borderRadius: 16, overflow: 'hidden' },
+  card: {
+    backgroundColor: '#fff', borderRadius: 16, overflow: 'hidden',
+    borderWidth: 1, borderColor: Colors.border,
+  },
   divider: { height: 1, backgroundColor: Colors.border, marginHorizontal: 16 },
+  savedRoutesLink: { flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.secondary + '08', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, marginBottom: 12, borderWidth: 1, borderColor: Colors.secondary + '20' },
+  savedRoutesLinkLeft: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  savedRoutesLinkText: { fontSize: 14, fontWeight: '700', color: Colors.secondary },
   listItem: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14 },
   listItemIcon: { width: 38, height: 38, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   listItemContent: { flex: 1 },
@@ -1382,6 +1635,7 @@ const styles = StyleSheet.create({
   emptyState: {
     backgroundColor: '#fff', borderRadius: 16, padding: 32,
     alignItems: 'center', gap: 12,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 6, elevation: 2,
   },
   emptyStateText: { fontSize: 15, color: Colors.textMuted, fontWeight: '500' },
   emptyStateBtn: {
@@ -1405,10 +1659,11 @@ const styles = StyleSheet.create({
   achievementBadge: {
     width: '48%', backgroundColor: '#fff', borderRadius: 16, padding: 16,
     alignItems: 'center', gap: 8,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 6, elevation: 2,
   },
   achievementLocked: { opacity: 0.5 },
   achievementIcon: {
-    width: 48, height: 48, borderRadius: 24, backgroundColor: '#EFF6FF',
+    width: 48, height: 48, borderRadius: 24, backgroundColor: Colors.secondary + '15',
     alignItems: 'center', justifyContent: 'center',
   },
   achievementIconLocked: { backgroundColor: '#F1F5F9' },
@@ -1432,7 +1687,7 @@ const styles = StyleSheet.create({
     width: 88, height: 88, borderRadius: 44,
   },
   avatarPickerPlaceholder: {
-    backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center',
+    backgroundColor: Colors.secondary + '15', alignItems: 'center', justifyContent: 'center',
   },
   avatarPickerOverlay: {
     position: 'absolute', bottom: 0, right: 0,
@@ -1503,4 +1758,43 @@ const styles = StyleSheet.create({
   centerTitle: { fontSize: 18, fontWeight: '700', color: Colors.text },
   loginBtn: { backgroundColor: Colors.primary, borderRadius: 14, paddingVertical: 14, paddingHorizontal: 40 },
   loginText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+
+  // ── Subscribe banner ───────────────────────────────────────────────────────
+  subscribeCard: {
+    backgroundColor: Colors.primary,
+    borderRadius: 14,
+    padding: 16,
+    marginHorizontal: 20,
+    marginTop: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  subscribedCard: { backgroundColor: Colors.success + '18', borderWidth: 1.5, borderColor: Colors.success + '40' },
+  subscribeLeft: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  subscribeTitle: { fontSize: 15, fontWeight: '700', color: '#fff' },
+  subscribedTitle: { color: Colors.success },
+  subscribeSub: { fontSize: 12, color: 'rgba(255,255,255,0.75)', marginTop: 2 },
+  subscribedSub: { color: Colors.success },
+  subscribePricePill: {
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  subscribePriceText: { color: '#fff', fontWeight: '800', fontSize: 14 },
+
+  // ── Lock / free pills (captain content) ───────────────────────────────────
+  lockPill: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    backgroundColor: Colors.warning + '18', borderRadius: 8,
+    paddingHorizontal: 7, paddingVertical: 3,
+  },
+  lockPillText: { fontSize: 11, fontWeight: '700', color: Colors.warning },
+  freePill: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    backgroundColor: Colors.success + '18', borderRadius: 8,
+    paddingHorizontal: 7, paddingVertical: 3,
+  },
+  freePillText: { fontSize: 11, fontWeight: '700', color: Colors.success },
 })

@@ -120,7 +120,7 @@ const styles = StyleSheet.create({
   filterRow: { backgroundColor: '#fff', paddingVertical: 10 },
   filterChip: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: '#EFF6FF', borderRadius: 20,
+    backgroundColor: Colors.secondary + '15', borderRadius: 20,
     paddingHorizontal: 14, paddingVertical: 7,
   },
   filterChipActive: { backgroundColor: Colors.primary },

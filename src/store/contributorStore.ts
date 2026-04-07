@@ -1,208 +1,368 @@
+/**
+ * Skipperway contributor store — manages Contribution Score (CS) and
+ * Reputation Score (RS) separately, with anti-spam logic throughout.
+ */
+
 import { create } from 'zustand'
 import {
-  ActionType, BadgeId, ContributorLevel, EarnedBadge, PointEvent, RewardItem,
-  POINT_VALUES, LEVELS, getLevelForPoints, MIN_COMMENT_LENGTH_FOR_POINTS,
-  BADGE_CONFIGS,
+  ContributionAction, ReputationAction,
+  ContributionEvent, ReputationEvent,
+  CONTRIBUTION_VALUES, REPUTATION_BASE,
+  UNWEIGHTED_REPUTATION_ACTIONS, CONTENT_QUALITY_REQUIRED,
+  DAILY_CS_CAP, MIN_COMMENT_LENGTH,
+  TIER_WEIGHTS, UserTier,
+  ENGAGER_FULL_WEIGHT_UP_TO, ENGAGER_SUBSEQUENT_WEIGHT, ENGAGER_INTERACTION_CAP,
+  RS_DECAY_PERIOD_DAYS, RS_DECAY_FLOOR,
+  SkipperwayLevel, SKIPPERWAY_LEVELS, getLevelForScores,
+  BadgeId, EarnedBadge, BADGE_CONFIGS,
+  RewardItem,
 } from '../types/contributor'
 import { safeStorage } from '../utils/storage'
 
-const STORAGE_KEY = 'contributor_v2'
+const STORAGE_KEY = 'contributor_v3'
+
+// ── Store interface ───────────────────────────────────────────────────────────
 
 interface ContributorState {
-  totalPoints:  number
-  currentLevel: ContributorLevel
-  pointEvents:  PointEvent[]
+  /** CS — visible score tracking what the user does */
+  contributionScore: number
+  /** RS — reputation score, drives level progression */
+  reputationScore: number
+  currentLevel: SkipperwayLevel
+
+  contributionEvents: ContributionEvent[]
+  reputationEvents: ReputationEvent[]
   earnedBadges: EarnedBadge[]
-  /** Queue of level-up / badge-unlock events waiting to be shown as celebration toasts */
   pendingRewards: RewardItem[]
 
-  // Selectors
-  pointsToNextLevel:   () => number
-  progressToNextLevel: () => number   // 0–1
+  // ── Selectors ──
+  progressToNextLevel: () => number
+  rsToNextLevel: () => number
+  csToNextLevel: () => number
+  uniqueEngagersCount: () => number
+  qualityPiecesCount: () => number
+  hasVerifiedContent: () => boolean
+  totalContributions: () => number
+  conditionsForLevel: (level: SkipperwayLevel) => Array<{
+    label: string; met: boolean; current: number; required: number
+  }>
+  /**
+   * Returns the current effective RS for a specific piece of content,
+   * accounting for freshness decay. Use this to power ranked content lists
+   * (popular routes, featured places, top captains).
+   */
+  getContentRS: (contentId: string) => number
 
-  // Mutations
-  earnPoints:    (action: ActionType, referenceId?: string, overrideText?: string) => void
-  revokePoints:  (referenceId: string) => void
-  awardBadge:    (badgeId: BadgeId) => void
+  // ── Mutations ──
+  earnContribution: (action: ContributionAction, referenceId?: string, text?: string) => void
+  earnReputation: (action: ReputationAction, opts?: {
+    engagerId?: string; engagerLevel?: number; contentId?: string
+    /**
+     * Pass `true` when the content being engaged with meets the minimum quality
+     * bar (e.g. has a description, category, non-empty route stops).
+     * Required for PLACE_LIKED, PLACE_SAVED, ROUTE_SAVED — omitting it silently
+     * skips the RS grant for those actions.
+     */
+    qualityVerified?: boolean
+  }) => void
+  revokeContent: (referenceId: string) => void
+  awardBadge: (badgeId: BadgeId) => void
   dismissReward: (rewardId: string) => void
 
-  // Persistence
+  // ── Persistence ──
   loadContributor: () => Promise<void>
   saveContributor: () => Promise<void>
+
+  spendPoints: (amount: number) => void
+
+  // ── Legacy shims (called by placesStore / routeBuilderStore / commentsStore) ──
+  earnPoints: (action: string, referenceId?: string, text?: string) => void
+  revokePoints: (referenceId: string) => void
 }
 
-// ── Anti-spam helpers ─────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** Actions that may only fire once per unique referenceId */
-const DEDUPED_ACTIONS = new Set<ActionType>([
-  'ADD_PLACE', 'ADD_PHOTOS', 'WRITE_COMMENT', 'CREATE_ROUTE',
-])
-
-function canAward(events: PointEvent[], action: ActionType, refId?: string): boolean {
-  if (!DEDUPED_ACTIONS.has(action) || !refId) return true
-  return !events.some((e) => e.actionType === action && e.referenceId === refId)
+function todayStr(): string {
+  return new Date().toISOString().slice(0, 10)
 }
 
-// ── Badge trigger checks ──────────────────────────────────────────────────────
+function makeId(prefix: string): string {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`
+}
+
+function csTodayTotal(events: ContributionEvent[]): number {
+  const today = todayStr()
+  return events.filter((e) => e.date === today).reduce((s, e) => s + e.csAwarded, 0)
+}
+
+const DEDUPED: Set<ContributionAction> = new Set(['ADD_PLACE', 'ADD_PHOTOS', 'WRITE_COMMENT', 'CREATE_ROUTE'])
+
+function alreadyEarned(events: ContributionEvent[], action: ContributionAction, refId?: string): boolean {
+  if (!DEDUPED.has(action) || !refId) return false
+  return events.some((e) => e.action === action && e.referenceId === refId)
+}
+
+function priorInteractionsFrom(events: ReputationEvent[], engagerId: string, contentId: string): number {
+  return events.filter((e) => e.engagerId === engagerId && e.contentId === contentId).length
+}
+
+function calcRS(action: ReputationAction, engagerLevel: number, priorCount: number): number {
+  const base = REPUTATION_BASE[action]
+  const unweighted = UNWEIGHTED_REPUTATION_ACTIONS.has(action)
+  const tierWeight = unweighted
+    ? 1.0
+    : TIER_WEIGHTS[(Math.min(Math.max(engagerLevel, 1), 6)) as UserTier]
+  let diminish = 1.0
+  if (priorCount >= ENGAGER_INTERACTION_CAP) return 0
+  if (priorCount >= ENGAGER_FULL_WEIGHT_UP_TO) diminish = ENGAGER_SUBSEQUENT_WEIGHT
+  return Math.round(base * tierWeight * diminish * 10) / 10
+}
+
+// ── Freshness decay ───────────────────────────────────────────────────────────
+
+function ageDecay(createdAt: string): number {
+  const ageDays = (Date.now() - new Date(createdAt).getTime()) / 86_400_000
+  return Math.max(RS_DECAY_FLOOR, 1 - (ageDays / RS_DECAY_PERIOD_DAYS) * (1 - RS_DECAY_FLOOR))
+}
+
+/**
+ * Compute total effective RS from all reputation events, with freshness decay.
+ * This is always recomputed from events — it naturally changes as events age.
+ */
+function computeEffectiveRS(events: ReputationEvent[]): number {
+  return Math.round(events.reduce((sum, e) => sum + e.rsAwarded * ageDecay(e.createdAt), 0) * 10) / 10
+}
+
+/**
+ * Compute effective RS for a single piece of content (by contentId).
+ * Used to power ranked content lists: popular routes, featured places, etc.
+ */
+function computeContentRS(events: ReputationEvent[], contentId: string): number {
+  return Math.round(
+    events
+      .filter((e) => e.contentId === contentId)
+      .reduce((sum, e) => sum + e.rsAwarded * ageDecay(e.createdAt), 0) * 10
+  ) / 10
+}
+
+function deriveConditions(ce: ContributionEvent[], re: ReputationEvent[]) {
+  return {
+    uniqueEngagers: new Set(re.map((e) => e.engagerId).filter(Boolean)).size,
+    qualityPieces: ce.filter((e) => e.action === 'ADD_PLACE' || e.action === 'CREATE_ROUTE').length,
+    hasVerifiedContent: re.some((e) => e.action === 'PLACE_VERIFIED'),
+    totalContributions: ce.length,
+  }
+}
 
 function checkBadges(
-  events: PointEvent[],
-  badges: EarnedBadge[],
-  totalPoints: number,
+  ce: ContributionEvent[], re: ReputationEvent[],
+  earned: EarnedBadge[], cs: number, levelNum: number,
 ): BadgeId[] {
-  const awarded = new Set(badges.map((b) => b.badgeId))
-  const newBadges: BadgeId[] = []
-  const grant = (id: BadgeId) => { if (!awarded.has(id)) { newBadges.push(id); awarded.add(id) } }
+  const have = new Set(earned.map((b) => b.badgeId))
+  const ids: BadgeId[] = []
+  const grant = (id: BadgeId) => { if (!have.has(id)) { ids.push(id); have.add(id) } }
 
-  const placeCount   = events.filter((e) => e.actionType === 'ADD_PLACE').length
-  const photoCount   = events.filter((e) => e.actionType === 'ADD_PHOTOS').length
-  const commentCount = events.filter((e) => e.actionType === 'WRITE_COMMENT').length
-  const routeCount   = events.filter((e) => e.actionType === 'CREATE_ROUTE').length
-  const routeSolds   = events.filter((e) => e.actionType === 'ROUTE_PURCHASED').length
-  const verifiedCount = events.filter((e) => e.actionType === 'PLACE_VERIFIED').length
+  const places   = ce.filter((e) => e.action === 'ADD_PLACE').length
+  const photos   = ce.filter((e) => e.action === 'ADD_PHOTOS').length
+  const comments = ce.filter((e) => e.action === 'WRITE_COMMENT').length
+  const routes   = ce.filter((e) => e.action === 'CREATE_ROUTE').length
+  const sold     = re.filter((e) => e.action === 'ROUTE_PURCHASED').length
+  const verified = re.some((e) => e.action === 'PLACE_VERIFIED')
+  const engagers = new Set(re.map((e) => e.engagerId).filter(Boolean)).size
 
-  // Cartography
-  if (placeCount >= 1)   grant('FIRST_PLACE')
-  if (placeCount >= 10)  grant('TEN_PLACES')
-  if (placeCount >= 50)  grant('FIFTY_PLACES')
-  // Photography
-  if (photoCount >= 1)   grant('FIRST_PHOTO')
-  if (photoCount >= 20)  grant('PHOTO_COLLECTION')
-  // Community
-  if (commentCount >= 1)  grant('FIRST_COMMENT')
-  if (commentCount >= 10) grant('ACTIVE_REVIEWER')
-  // Navigation
-  if (routeCount >= 1)   grant('FIRST_ROUTE')
-  if (routeCount >= 5)   grant('ROUTE_MASTER')
-  if (routeSolds >= 1)   grant('FIRST_ROUTE_SOLD')
-  // Reputation
-  if (verifiedCount >= 1)  grant('PLACE_VERIFIED')
-  if (totalPoints >= 400)  grant('TOP_CONTRIBUTOR')
-  if (totalPoints >= 800)  grant('MASTER_NAVIGATOR')
-  // Milestones
-  if (totalPoints >= 100)  grant('CENTURY_POINTS')
-  if (totalPoints >= 250)  grant('RISING_STAR')
+  if (places >= 1)   grant('FIRST_PLACE')
+  if (places >= 10)  grant('TEN_PLACES')
+  if (places >= 50)  grant('FIFTY_PLACES')
+  if (photos >= 1)   grant('FIRST_PHOTO')
+  if (photos >= 20)  grant('PHOTO_COLLECTION')
+  if (comments >= 1) grant('FIRST_COMMENT')
+  if (comments >= 10)grant('ACTIVE_REVIEWER')
+  if (routes >= 1)   grant('FIRST_ROUTE')
+  if (routes >= 5)   grant('ROUTE_MASTER')
+  if (sold >= 1)     grant('FIRST_ROUTE_SOLD')
+  if (engagers >= 1) grant('FIRST_ENGAGER')
+  if (engagers >= 10)grant('TEN_ENGAGERS')
+  if (verified)      grant('VERIFIED_SCOUT')
+  if (levelNum >= 3) grant('REACHED_CAPTAIN')
+  if (levelNum >= 4) grant('REACHED_SEA_GUIDE')
+  if (levelNum >= 5) grant('REACHED_COMMODORE')
+  if (levelNum >= 6) grant('REACHED_LEGEND')
+  if (cs >= 50)      grant('CS_FIFTY')
+  if (cs >= 200)     grant('CS_TWO_HUNDRED')
 
-  return newBadges
+  return ids
 }
 
-function makeRewardId() {
-  return `rw-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`
+function buildRewards(pending: RewardItem[], prevLevel: number, newLevel: SkipperwayLevel, newBadgeIds: BadgeId[]): RewardItem[] {
+  const rewards = [...pending]
+  if (newLevel.level > prevLevel) {
+    rewards.push({ id: makeId('rw'), type: 'LEVEL_UP', level: newLevel, createdAt: new Date().toISOString() })
+  }
+  for (const badgeId of newBadgeIds) {
+    rewards.push({ id: makeId('rw'), type: 'BADGE_UNLOCK', badge: BADGE_CONFIGS[badgeId], createdAt: new Date().toISOString() })
+  }
+  return rewards
 }
 
 // ── Store ─────────────────────────────────────────────────────────────────────
 
 export const useContributorStore = create<ContributorState>((set, get) => ({
-  totalPoints:    0,
-  currentLevel:   LEVELS[0],
-  pointEvents:    [],
-  earnedBadges:   [],
+  contributionScore: 0,
+  reputationScore: 0,
+  currentLevel: SKIPPERWAY_LEVELS[0],
+  contributionEvents: [],
+  reputationEvents: [],
+  earnedBadges: [],
   pendingRewards: [],
 
-  pointsToNextLevel: () => {
-    const { totalPoints, currentLevel } = get()
-    if (currentLevel.maxPoints === Infinity) return 0
-    return currentLevel.maxPoints + 1 - totalPoints
-  },
-
   progressToNextLevel: () => {
-    const { totalPoints, currentLevel } = get()
-    if (currentLevel.maxPoints === Infinity) return 1
-    const range = currentLevel.maxPoints + 1 - currentLevel.minPoints
-    const done  = totalPoints - currentLevel.minPoints
-    return Math.min(done / range, 1)
+    const { reputationScore, currentLevel } = get()
+    const nextIdx = currentLevel.level
+    if (nextIdx >= SKIPPERWAY_LEVELS.length) return 1
+    const next = SKIPPERWAY_LEVELS[nextIdx]
+    const range = next.minRS - currentLevel.minRS
+    return range > 0 ? Math.min((reputationScore - currentLevel.minRS) / range, 1) : 1
   },
 
-  earnPoints: (action, referenceId, overrideText) => {
-    const { pointEvents, earnedBadges, currentLevel, pendingRewards } = get()
+  rsToNextLevel: () => {
+    const { reputationScore, currentLevel } = get()
+    const nextIdx = currentLevel.level
+    if (nextIdx >= SKIPPERWAY_LEVELS.length) return 0
+    return Math.max(0, SKIPPERWAY_LEVELS[nextIdx].minRS - reputationScore)
+  },
 
-    // Comment length guard
-    if (action === 'WRITE_COMMENT' && overrideText !== undefined) {
-      if (overrideText.length < MIN_COMMENT_LENGTH_FOR_POINTS) return
+  csToNextLevel: () => {
+    const { contributionScore, currentLevel } = get()
+    const nextIdx = currentLevel.level
+    if (nextIdx >= SKIPPERWAY_LEVELS.length) return 0
+    return Math.max(0, SKIPPERWAY_LEVELS[nextIdx].minCS - contributionScore)
+  },
+
+  getContentRS: (contentId) => computeContentRS(get().reputationEvents, contentId),
+
+  uniqueEngagersCount: () =>
+    new Set(get().reputationEvents.map((e) => e.engagerId).filter(Boolean)).size,
+
+  qualityPiecesCount: () =>
+    get().contributionEvents.filter((e) => e.action === 'ADD_PLACE' || e.action === 'CREATE_ROUTE').length,
+
+  hasVerifiedContent: () =>
+    get().reputationEvents.some((e) => e.action === 'PLACE_VERIFIED'),
+
+  totalContributions: () =>
+    get().contributionEvents.length,
+
+  conditionsForLevel: (level) => {
+    const { uniqueEngagersCount, qualityPiecesCount, hasVerifiedContent, totalContributions } = get()
+    const c = level.conditions
+    const rows: Array<{ label: string; met: boolean; current: number; required: number }> = []
+    if (c.minUniqueEngagers !== undefined) {
+      const cur = uniqueEngagersCount()
+      rows.push({ label: 'Sailors who engaged with your content', met: cur >= c.minUniqueEngagers, current: cur, required: c.minUniqueEngagers })
     }
-
-    // Deduplication guard
-    if (!canAward(pointEvents, action, referenceId)) return
-
-    const pts = POINT_VALUES[action]
-    const event: PointEvent = {
-      id: `pe-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
-      actionType: action,
-      pointsAwarded: pts,
-      referenceId,
-      createdAt: new Date().toISOString(),
+    if (c.minQualityPieces !== undefined) {
+      const cur = qualityPiecesCount()
+      rows.push({ label: 'Places or routes contributed', met: cur >= c.minQualityPieces, current: cur, required: c.minQualityPieces })
     }
-
-    const newEvents   = [event, ...pointEvents]
-    const newTotal    = get().totalPoints + pts
-    const newLevel    = getLevelForPoints(newTotal)
-    const newBadgeIds = checkBadges(newEvents, earnedBadges, newTotal)
-    const newBadges   = [
-      ...earnedBadges,
-      ...newBadgeIds.map((id) => ({ badgeId: id, earnedAt: new Date().toISOString() })),
-    ]
-
-    // Build celebration rewards
-    const rewards: RewardItem[] = [...pendingRewards]
-    if (newLevel.level > currentLevel.level) {
-      rewards.push({ id: makeRewardId(), type: 'LEVEL_UP', level: newLevel, createdAt: new Date().toISOString() })
+    if (c.requiresVerifiedContent) {
+      const cur = hasVerifiedContent() ? 1 : 0
+      rows.push({ label: 'Verified place or route', met: cur >= 1, current: cur, required: 1 })
     }
-    for (const badgeId of newBadgeIds) {
-      rewards.push({ id: makeRewardId(), type: 'BADGE_UNLOCK', badge: BADGE_CONFIGS[badgeId], createdAt: new Date().toISOString() })
+    if (c.minContributions !== undefined) {
+      const cur = totalContributions()
+      rows.push({ label: 'Contributions made', met: cur >= c.minContributions, current: cur, required: c.minContributions })
     }
+    return rows
+  },
+
+  earnContribution: (action, referenceId, text) => {
+    const { contributionEvents, reputationEvents, earnedBadges, pendingRewards, currentLevel } = get()
+    if (action === 'WRITE_COMMENT' && text !== undefined && text.length < MIN_COMMENT_LENGTH) return
+    if (alreadyEarned(contributionEvents, action, referenceId)) return
+    const rawCS = CONTRIBUTION_VALUES[action]
+    const remaining = Math.max(0, DAILY_CS_CAP - csTodayTotal(contributionEvents))
+    const csAwarded = Math.min(rawCS, remaining)
+    if (csAwarded <= 0) return
+
+    const event: ContributionEvent = {
+      id: makeId('ce'), action, csAwarded, referenceId,
+      date: todayStr(), createdAt: new Date().toISOString(),
+    }
+    const newCE = [event, ...contributionEvents]
+    const newCS = get().contributionScore + csAwarded
+    const cond = deriveConditions(newCE, reputationEvents)
+    const newLevel = getLevelForScores(get().reputationScore, newCS, cond)
+    const newBadgeIds = checkBadges(newCE, reputationEvents, earnedBadges, newCS, newLevel.level)
+    const newBadges = [...earnedBadges, ...newBadgeIds.map((id) => ({ badgeId: id, earnedAt: new Date().toISOString() }))]
 
     set({
-      totalPoints:    newTotal,
-      currentLevel:   newLevel,
-      pointEvents:    newEvents,
-      earnedBadges:   newBadges,
-      pendingRewards: rewards,
+      contributionScore: newCS, currentLevel: newLevel,
+      contributionEvents: newCE, earnedBadges: newBadges,
+      pendingRewards: buildRewards(pendingRewards, currentLevel.level, newLevel, newBadgeIds),
     })
-
     get().saveContributor()
   },
 
-  revokePoints: (referenceId) => {
-    const { pointEvents } = get()
+  earnReputation: (action, opts = {}) => {
+    const { reputationEvents, contributionEvents, earnedBadges, pendingRewards, currentLevel } = get()
+    const { engagerId, engagerLevel = 1, contentId, qualityVerified = false } = opts
 
-    // Find events tied to this content
-    const toRevoke = pointEvents.filter((e) => e.referenceId === referenceId)
-    if (toRevoke.length === 0) return
+    // Quality gate: low-signal user actions require verified quality content
+    if (CONTENT_QUALITY_REQUIRED.has(action) && !qualityVerified) return
 
-    const revokedTotal = toRevoke.reduce((sum, e) => sum + e.pointsAwarded, 0)
-    const remaining    = pointEvents.filter((e) => e.referenceId !== referenceId)
-    const newTotal     = Math.max(0, get().totalPoints - revokedTotal)
-    const newLevel     = getLevelForPoints(newTotal)
+    const prior = (engagerId && contentId) ? priorInteractionsFrom(reputationEvents, engagerId, contentId) : 0
+    const rsAwarded = calcRS(action, engagerLevel, prior)
+    if (rsAwarded <= 0) return
 
-    // Badges are permanent once earned — we never remove them
+    const event: ReputationEvent = {
+      id: makeId('re'), action, rsAwarded, engagerId, contentId,
+      createdAt: new Date().toISOString(),
+    }
+    const newRE = [event, ...reputationEvents]
+    // RS is always recomputed from events with freshness decay applied
+    const newRS = computeEffectiveRS(newRE)
+    const cond = deriveConditions(contributionEvents, newRE)
+    const newLevel = getLevelForScores(newRS, get().contributionScore, cond)
+    const newBadgeIds = checkBadges(contributionEvents, newRE, earnedBadges, get().contributionScore, newLevel.level)
+    const newBadges = [...earnedBadges, ...newBadgeIds.map((id) => ({ badgeId: id, earnedAt: new Date().toISOString() }))]
+
     set({
-      totalPoints:  newTotal,
-      currentLevel: newLevel,
-      pointEvents:  remaining,
-      // earnedBadges unchanged
+      reputationScore: newRS, currentLevel: newLevel,
+      reputationEvents: newRE, earnedBadges: newBadges,
+      pendingRewards: buildRewards(pendingRewards, currentLevel.level, newLevel, newBadgeIds),
     })
+    get().saveContributor()
+  },
 
+  revokeContent: (referenceId) => {
+    const { contributionEvents, reputationEvents } = get()
+    const revokedCS = contributionEvents.filter((e) => e.referenceId === referenceId).reduce((s, e) => s + e.csAwarded, 0)
+    const remainingCE = contributionEvents.filter((e) => e.referenceId !== referenceId)
+    const revokedRS = reputationEvents.filter((e) => e.contentId === referenceId).reduce((s, e) => s + e.rsAwarded, 0)
+    const remainingRE = reputationEvents.filter((e) => e.contentId !== referenceId)
+    const newCS = Math.max(0, get().contributionScore - revokedCS)
+    const newRS = Math.max(0, get().reputationScore - revokedRS)
+    const cond = deriveConditions(remainingCE, remainingRE)
+    set({
+      contributionScore: newCS, reputationScore: newRS,
+      currentLevel: getLevelForScores(newRS, newCS, cond),
+      contributionEvents: remainingCE, reputationEvents: remainingRE,
+    })
     get().saveContributor()
   },
 
   awardBadge: (badgeId) => {
     const { earnedBadges, pendingRewards } = get()
     if (earnedBadges.some((b) => b.badgeId === badgeId)) return
-    const updated = [...earnedBadges, { badgeId, earnedAt: new Date().toISOString() }]
-    const reward: RewardItem = {
-      id: makeRewardId(),
-      type: 'BADGE_UNLOCK',
-      badge: BADGE_CONFIGS[badgeId],
-      createdAt: new Date().toISOString(),
-    }
-    set({ earnedBadges: updated, pendingRewards: [...pendingRewards, reward] })
+    set({
+      earnedBadges: [...earnedBadges, { badgeId, earnedAt: new Date().toISOString() }],
+      pendingRewards: [...pendingRewards, { id: makeId('rw'), type: 'BADGE_UNLOCK', badge: BADGE_CONFIGS[badgeId], createdAt: new Date().toISOString() }],
+    })
     get().saveContributor()
   },
 
   dismissReward: (rewardId) => {
-    set((state) => ({
-      pendingRewards: state.pendingRewards.filter((r) => r.id !== rewardId),
-    }))
+    set((s) => ({ pendingRewards: s.pendingRewards.filter((r) => r.id !== rewardId) }))
   },
 
   loadContributor: async () => {
@@ -210,13 +370,16 @@ export const useContributorStore = create<ContributorState>((set, get) => ({
       const raw = await safeStorage.getItem(STORAGE_KEY)
       if (raw) {
         const saved = JSON.parse(raw)
-        const total = saved.totalPoints ?? 0
+        const cs = saved.contributionScore ?? 0
+        const ce: ContributionEvent[] = saved.contributionEvents ?? []
+        const re: ReputationEvent[] = saved.reputationEvents ?? []
+        // Always recompute RS from events so freshness decay is applied on load
+        const rs = computeEffectiveRS(re)
         set({
-          totalPoints:  total,
-          currentLevel: getLevelForPoints(total),
-          pointEvents:  saved.pointEvents  ?? [],
+          contributionScore: cs, reputationScore: rs,
+          currentLevel: getLevelForScores(rs, cs, deriveConditions(ce, re)),
+          contributionEvents: ce, reputationEvents: re,
           earnedBadges: saved.earnedBadges ?? [],
-          // pendingRewards are transient — never restored from storage
         })
       }
     } catch {
@@ -226,10 +389,30 @@ export const useContributorStore = create<ContributorState>((set, get) => ({
 
   saveContributor: async () => {
     try {
-      const { totalPoints, pointEvents, earnedBadges } = get()
-      await safeStorage.setItem(STORAGE_KEY, JSON.stringify({ totalPoints, pointEvents, earnedBadges }))
+      const { contributionScore, reputationScore, contributionEvents, reputationEvents, earnedBadges } = get()
+      await safeStorage.setItem(STORAGE_KEY, JSON.stringify({
+        contributionScore, reputationScore, contributionEvents, reputationEvents, earnedBadges,
+      }))
     } catch {
       // in-memory only
     }
+  },
+
+  spendPoints: (amount) => {
+    set((s) => ({ contributionScore: Math.max(0, s.contributionScore - amount) }))
+    get().saveContributor()
+  },
+
+  // ── Legacy shims ──────────────────────────────────────────────────────────
+
+  earnPoints: (action, referenceId, text) => {
+    const contributionSet = new Set<string>(['ADD_PLACE', 'ADD_PHOTOS', 'WRITE_COMMENT', 'CREATE_ROUTE'])
+    if (contributionSet.has(action)) {
+      get().earnContribution(action as ContributionAction, referenceId, text)
+    }
+  },
+
+  revokePoints: (referenceId) => {
+    get().revokeContent(referenceId)
   },
 }))

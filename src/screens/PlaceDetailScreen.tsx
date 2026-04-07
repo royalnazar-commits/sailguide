@@ -936,7 +936,7 @@ const styles = StyleSheet.create({
   name: { flex: 1, fontSize: 24, fontWeight: '800', color: Colors.text, lineHeight: 30 },
   verifiedBadge: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
-    backgroundColor: '#EFF6FF', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, marginTop: 4,
+    backgroundColor: Colors.secondary + '15', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, marginTop: 4,
   },
   verifiedText: { fontSize: 11, color: Colors.verified, fontWeight: '600' },
   locationRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 10 },
@@ -953,7 +953,7 @@ const styles = StyleSheet.create({
 
   tipRow: { flexDirection: 'row', gap: 10, marginBottom: 10, alignItems: 'flex-start' },
   tipIcon: {
-    width: 28, height: 28, borderRadius: 14, backgroundColor: '#EFF6FF',
+    width: 28, height: 28, borderRadius: 14, backgroundColor: Colors.secondary + '15',
     alignItems: 'center', justifyContent: 'center', marginTop: 1, flexShrink: 0,
   },
   tipText: { flex: 1, fontSize: 14, color: Colors.textSecondary, lineHeight: 22 },
@@ -961,7 +961,7 @@ const styles = StyleSheet.create({
   // Your place
   yourPlaceBadge: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: '#EFF6FF', borderRadius: 10,
+    backgroundColor: Colors.secondary + '15', borderRadius: 10,
     paddingHorizontal: 12, paddingVertical: 8, marginBottom: 16,
   },
   yourPlaceText: { fontSize: 13, color: Colors.secondary, fontWeight: '600', flex: 1 },
@@ -975,7 +975,7 @@ const styles = StyleSheet.create({
 
   // Tags
   tagsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 20 },
-  tagPill: { backgroundColor: '#EFF6FF', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4 },
+  tagPill: { backgroundColor: Colors.secondary + '15', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4 },
   tagText: { fontSize: 13, color: Colors.secondary },
 
   // Mini map
@@ -1054,7 +1054,7 @@ const styles = StyleSheet.create({
   commentsSectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
   commentCountPill: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
-    backgroundColor: '#EFF6FF', borderRadius: 20, paddingHorizontal: 8, paddingVertical: 3,
+    backgroundColor: Colors.secondary + '15', borderRadius: 20, paddingHorizontal: 8, paddingVertical: 3,
   },
   commentCountPillText: { fontSize: 12, color: Colors.secondary, fontWeight: '600' },
 
@@ -1156,7 +1156,7 @@ const styles = StyleSheet.create({
   // Best for
   bestForRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   bestForPill: {
-    backgroundColor: '#EFF6FF', borderRadius: 20,
+    backgroundColor: Colors.secondary + '15', borderRadius: 20,
     paddingHorizontal: 12, paddingVertical: 5,
     borderWidth: 1, borderColor: '#BFDBFE',
   },
